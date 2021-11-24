@@ -1,11 +1,12 @@
 import requests
 import json
 import os
+import threading
+
+from time import time, sleep
 from datetime import datetime
 
 # API documentation: https://swyftx.docs.apiary.io/
-
-key = "g_ZzZKJaMHt9ufjYtZ16iHZWn-lKyjy0i8KzwFY3G-QLE"
 
 endpoints = {
     "base": "https://api.swyftx.com.au/",
@@ -20,6 +21,36 @@ class OldTokenError(Exception):
 class EmptyTokenError(Exception):
     pass
 
+
+class RepeatedTimer(object):
+    """
+    Copied from: https://stackoverflow.com/questions/474528/what-is-the-best-way-to-repeatedly-execute-a-function-every-x-seconds
+    """
+    def __init__(self, interval, function, *args, **kwargs):
+        self._timer = None
+        self.interval = interval
+        self.function = function
+        self.args = args
+        self.kwargs = kwargs
+        self.is_running = False
+        self.next_call = time()
+        self.start()
+
+    def _run(self):
+        self.is_running = False
+        self.start()
+        self.function(*self.args, **self.kwargs)
+
+    def start(self):
+        if not self.is_running:
+            self.next_call += self.interval
+            self._timer = threading.Timer(self.next_call - time(), self._run)
+            self._timer.start()
+            self.is_running = True
+
+    def stop(self):
+        self._timer.cancel()
+        self.is_running = False
 
 class SwagX:
     def __init__(self, apiKey, mode="demo"):
@@ -199,26 +230,62 @@ class SwagX:
         response = self.session.post(self.endpoint + "orders/", data=json.dumps(payload))
         return response
 
-    def stream_asset_data(self, assetCode):
-        swag.session.headers.update(swag.default_header)
-        r = swag.session.get(endpoints[
-                                 "base"] + "charts/getBars/" + "USD/BTC/ask/?resolution=1m&timeStart=1637530212000&timeEnd=1637579983000")
+    def get_asset_data(self, primary, secondary, side, resolution, time_start, time_end, readable_time=True):
+        """
+        ----------------------------------------------------------------------------------------------------------
+        Notes:
+        ask refers to the buy price.
+        bid refers to the sell price.
+        For some reason, SwyftX Unix time has 3 extra digits to the right because they keep track of milliseconds
+            for some reason. So, when converting, remember to multiply my 1000, and dividing by 1000 when
+            translating it to human-readable datetime.
+        ----------------------------------------------------------------------------------------------------------
+        :param time_start: 2 possibilities - either a string representing unix epoch, or a datetime object.
+            Determines the starting time (time of the first bar).
+        :param time_end: 2 possibilities - either a string representing unix epoch, or a datetime object.
+            Determines the ending time (time of the last bar).
+        :return:
+        """
+        if type(time_start) is datetime:
+            time_start = str(1000*int(time_start.timestamp()))
+        if type(time_end) is datetime:
+            time_end = str(1000*int(time_end.timestamp()))
 
-        return r.text
-        pass
+        self.session.headers.update(self.default_header)
+        d = json.loads(self.session.get(endpoints[
+                                 "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, "timeStart="+time_start,"timeEnd="+time_end])])).text)["candles"]
+        if readable_time:
+            for i in range(len(d)):
+                d[i]["time"] = datetime.fromtimestamp(int(d[i]["time"])/1000)
+        return {
+            "assetCode":secondary,
+            "data":d
+        }
 
-    def dummy_buy(self):
-        values = '''{
-        "primary": "USD",
-        "secondary": "BTC",
-        "quantity": "1",
-        "assetQuantity": "USD",
-        "orderType": 1
-        }'''
-        self.session.headers.update(self.authenticate_header)
-        response = self.session.post("https://api.demo.swyftx.com.au/orders/", data=values)
-        return response
+    def get_live_asset_data(self, primary, secondary, side, resolution):
+        """
+        Gets the most recent completed bar of data for primary asset in terms of its value in the secondary asset.
+        :param primary: The asset that we'll use to evaluate the value of the secondary asset.
+        :param secondary: The asset that we're interested in.
+        :param side: Determines whether we're looking for the 'ask' or 'bid' price.
+        :param resolution: The time span that the candles will cover. Possible values include: '1m', '5m', '1h', '4h', '1d'
+        :return: a dictionary in the form of:
+            {
+                "side",
+                "bid",
+                "time",
+                "open",
+                "close",
+                "low",
+                "high"
+            }
+        """
+        self.session.headers.update(self.default_header)
+        r = self.session.get(endpoints["base"] + "charts/getLatestBar/" + "/".join([primary,secondary,side,"?resolution="+resolution]))
+        d = json.loads(r.text)
+        del d["volume"]
+        return d
 
 
 if '__main__' == __name__:
-    swag = SwagX(key)
+    swag = SwagX("g_ZzZKJaMHt9ufjYtZ16iHZWn-lKyjy0i8KzwFY3G-QLE")
