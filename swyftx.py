@@ -124,7 +124,7 @@ class SwagX:
     def to_id(self, name):
         return self._to_id[name]
 
-    def fetch_balance(self, prettify=False):
+    def fetch_balance(self, prettify=True):
 
         self.session.headers.update(self.authenticate_header)
         balance = json.loads(self.session.get(self.endpoint + "user/balance/").text)
@@ -262,7 +262,7 @@ class SwagX:
             "data":d
         }
 
-    def get_live_asset_data(self, primary, secondary, side, resolution):
+    def get_latest_asset_data(self, primary, secondary, side, resolution, stream=False):
         """
         Gets the most recent completed bar of data for primary asset in terms of its value in the secondary asset.
         :param primary: The asset that we'll use to evaluate the value of the secondary asset.
@@ -281,11 +281,38 @@ class SwagX:
             }
         """
         self.session.headers.update(self.default_header)
-        r = self.session.get(endpoints["base"] + "charts/getLatestBar/" + "/".join([primary,secondary,side,"?resolution="+resolution]))
-        d = json.loads(r.text)
-        del d["volume"]
-        return d
+        if not stream:
+            r = self.session.get(endpoints["base"] + "charts/getLatestBar/" + "/".join([primary,secondary,side,"?resolution="+resolution]))
+            d = json.loads(r.text)
+            del d["volume"]
+            return d
+        else:
+            #r = self.session.get(endpoints["base"] + "charts/getLatestBar/" + "/".join([primary,secondary,side,"?resolution="+resolution]), stream=True)
+            #print(r.text)
+            with self.session.get(endpoints["base"] + "charts/getLatestBar/" + "/".join([primary,secondary,side,"?resolution="+resolution]), stream=True) as resp:
+                for line in resp.iter_lines():
+                    if line:
+                        print(line)
 
+    def get_live_asset_rates(self, primary, secondary, reset_header = True, print_results=False):
+        primary = self.to_id(primary)
+        secondary = self.to_id(secondary)
+        if reset_header:
+            self.session.headers.update(self.default_header)
+        r = json.loads(self.session.get(endpoints["base"] + "live-rates/" + primary + "/").text)
+        if print_results:
+            print(r[secondary])
+        else:
+            return r[secondary]
+
+
+    def stream_data(self, primary, secondary, interval):
+        self.get_live_asset_rates(primary, secondary, print_results=True)
+        timer = RepeatedTimer(interval, self.get_live_asset_rates, primary, secondary,reset_header=False, print_results=True)
+        #self.session.headers.update(self.default_header)
+        #print(self.session.get(endpoints["base"]+"/".join(["charts/resolveSymbol",primary,secondary])).text)
 
 if '__main__' == __name__:
-    swag = SwagX("g_ZzZKJaMHt9ufjYtZ16iHZWn-lKyjy0i8KzwFY3G-QLE")
+    with open("key.txt", "r") as f:
+        key = f.readline()
+    swag = SwagX(key)

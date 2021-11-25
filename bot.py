@@ -7,10 +7,12 @@ from swyftx import SwagX
 from datetime import datetime
 
 
-key = "g_ZzZKJaMHt9ufjYtZ16iHZWn-lKyjy0i8KzwFY3G-QLE"
+with open("key.txt", "r") as f:
+    key = f.readline()
 
 def main():
     swag = SwagX(key)
+
 
 def extract_price_data(data):
     time, open, close, low, high = [], [], [], [], []
@@ -66,9 +68,18 @@ def plot_price_data(data):
 
     fig.show()
 
+def watch(assetCode):
+    d_buy = swag.get_asset_data("AUD", assetCode, "ask", "1m", datetime(2021,11,24), datetime.now())
+    nd_buy = extract_price_data(d_buy)
+    d_sell = swag.get_asset_data("AUD", assetCode, "bid", "1m", datetime(2021,11,24), datetime.now())
+    nd_sell = extract_price_data(d_sell)
+    plot_price_data(nd_buy)
+    plot_price_data(nd_sell)
+
 if '__main__' == __name__:
     swag = SwagX(key)
-    d_buy = swag.get_asset_data("AUD", "SAND", "ask", "1m", datetime(2021,11,24), datetime.now())
+    d_buy = swag.get_asset_data("AUD", "BTC", "ask", "1m", datetime(2021,11,24), datetime.now())
     nd_buy = extract_price_data(d_buy)
-    d_sell = swag.get_asset_data("AUD", "SAND", "bid", "1m", datetime(2021,11,24), datetime.now())
+    d_sell = swag.get_asset_data("AUD", "BTC", "bid", "1m", datetime(2021,11,24), datetime.now())
     nd_sell = extract_price_data(d_sell)
+    #watch("AUDIO")
