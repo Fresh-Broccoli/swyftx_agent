@@ -1,10 +1,12 @@
 import requests
 import json
 import os
-import threading
+import numpy as np
 
-from time import time, sleep
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timedelta
+from threaded_timer import RepeatedTimer
+from talib import MACD, EMA
 
 # API documentation: https://swyftx.docs.apiary.io/
 
@@ -21,39 +23,8 @@ class OldTokenError(Exception):
 class EmptyTokenError(Exception):
     pass
 
-
-class RepeatedTimer(object):
-    """
-    Copied from: https://stackoverflow.com/questions/474528/what-is-the-best-way-to-repeatedly-execute-a-function-every-x-seconds
-    """
-    def __init__(self, interval, function, *args, **kwargs):
-        self._timer = None
-        self.interval = interval
-        self.function = function
-        self.args = args
-        self.kwargs = kwargs
-        self.is_running = False
-        self.next_call = time()
-        self.start()
-
-    def _run(self):
-        self.is_running = False
-        self.start()
-        self.function(*self.args, **self.kwargs)
-
-    def start(self):
-        if not self.is_running:
-            self.next_call += self.interval
-            self._timer = threading.Timer(self.next_call - time(), self._run)
-            self._timer.start()
-            self.is_running = True
-
-    def stop(self):
-        self._timer.cancel()
-        self.is_running = False
-
 class SwagX:
-    def __init__(self, apiKey, mode="demo"):
+    def __init__(self, apiKey, mode="demo", blacklist = ["USDT", "USDC", "BUSD"]):
         self.endpoint = endpoints[mode]
         self.is_demo = True if mode == "demo" else False
         self.key = apiKey
@@ -64,8 +35,9 @@ class SwagX:
         self.token = self._fetch_token()
         self.authenticate_header = self._authenticate_header()
         self.asset_info = self._fetch_asset_info()
-        self._blacklist = ["USDT", "USDC", "BUSD"]
+        self._blacklist = blacklist
         self._to_id, self._to_code = self._create_name_id_dict(self.asset_info)
+        self.collected_data = {}
 
     def _authenticate_header(self):
         header = dict(self.default_header)
@@ -294,6 +266,28 @@ class SwagX:
                     if line:
                         print(line)
 
+    def extract_price_data(self, data, max_length = None):
+        if max_length is None:
+            max_length = len(data["data"])
+        time, open, close, low, high = deque([],max_length), deque([],max_length), deque([],max_length), deque([],max_length), deque([],max_length)
+        assetCode = data["assetCode"]
+        data=data["data"]
+        for i in range(max_length):
+            time.append(data[i]["time"])
+            open.append(data[i]["open"])
+            close.append(data[i]["close"])
+            low.append(data[i]["low"])
+            high.append(data[i]["high"])
+
+        return {
+            "assetCode":assetCode,
+            "time":time,
+            "open":open,
+            "close":close,
+            "low":low,
+            "high":high
+        }
+
     def get_live_asset_rates(self, primary, secondary, reset_header = True, print_results=False):
         primary = self.to_id(primary)
         secondary = self.to_id(secondary)
@@ -306,11 +300,26 @@ class SwagX:
             return r[secondary]
 
 
-    def stream_data(self, primary, secondary, interval):
+    def stream_data(self, primary, secondary, interval=1):
         self.get_live_asset_rates(primary, secondary, print_results=True)
         timer = RepeatedTimer(interval, self.get_live_asset_rates, primary, secondary,reset_header=False, print_results=True)
         #self.session.headers.update(self.default_header)
         #print(self.session.get(endpoints["base"]+"/".join(["charts/resolveSymbol",primary,secondary])).text)
+
+    def collect_and_process_live_data(self, primary, secondary, duration = None, start_time = None):
+        now = datetime.now()
+        if start_time is None:
+            # If there's no specified start time, it will be set 24 hours before the time this line is executed.
+            start_time = now - timedelta(days=1)
+
+        data = self.extract_price_data(self.get_asset_data(primary, secondary, "ask", "1m", start_time, now, True))
+        #data_bid = self.extract_price_data(self.get_asset_data(primary, secondary, "bid", "1m", start_time, now, True))
+        max_length = len(data["close"])
+        macd, macdsignal, macdhist = MACD(np.array(data["close"]))
+        macd = deque(macd, max_length)
+        macdsignal = deque(macdsignal, max_length)
+        ema_hundred = deque(EMA(np.array(data["close"]), 100), max_length)
+        return macd, macdsignal, ema_hundred
 
 if '__main__' == __name__:
     with open("key.txt", "r") as f:
