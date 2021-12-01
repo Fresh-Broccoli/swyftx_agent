@@ -1,24 +1,58 @@
-import talib
 import numpy as np
+import dash
 import plotly.graph_objects as go
+import dash_core_components as dcc
+import dash_html_components as html
 
 from collections import deque
 from plotly.subplots import make_subplots
 from swyftx import SwagX
 from datetime import datetime, timedelta
-from talib import MACD, EMA
+from talib import EMA
+from time import sleep
+from dash.dependencies import Output, Input
 
+resolution_to_seconds = {
+    "1m":60,
+    "5m":5*60,
+    "30m":30*60,
+    "1h":60*60
+}
 
+app = dash.Dash(__name__)
 
 class Bot:
 
     def __init__(self, key, mode="demo"):
         self.key = key
         self.swyftx = SwagX(key, mode)
-        self.ema_fast, self.ema_slow, self.macd, self.ema_hundred, self.macdsignal, self.data, self.primary, self.secondary, self.resolution = None,None,None,None,None,None, None, None, None
-        print("-"*100)
+        self.ema_fast, self.ema_slow, self.macd, self.ema_hundred, self.macdsignal, self.data, self.primary, self.secondary, self.resolution, self.app = None,None,None,None,None,None, None, None, None, None
+        print("-"*110)
         print("Bot created. Please call 'collect_and_process_live_data' to start trading a particular cryptocurrency.")
-        print("-"*100)
+        print("-"*110)
+
+    def quick_start(self, primary, secondary, resolution = "1m", fast = 12, slow = 26, signal = 9, long=100, duration = None, start_time = None, graph=False):
+        self.collect_and_process_live_data(primary, secondary, resolution, fast, slow, signal, long, duration, start_time)
+        if graph:
+            app.layout = html.Div(
+                [
+                    dcc.Graph(id="live-graph", animate=True, style={'height': '100vh'}),
+                    dcc.Interval('graph-update',
+                                 interval=1000*resolution_to_seconds[resolution])
+                ]
+            )
+            app.run_server(debug=False)
+        # There are 2 possibilities after this point.
+        # 1. The next interval has already started (very rare, only realistically happens when interval="1m")
+        # 2. There are still time until we reach the next interval.
+        # If 1:
+        #   Call update_all()
+        #   Save the time after the previous execution
+        #   Call calculate_next_..., calculate the time it takes
+        now = datetime.now().timestamp()
+        elapse = next_interval[resolution](now) - now
+        print("Waiting for " + str(elapse) + " seconds until the next minute...")
+        sleep(elapse)
 
     def collect_and_process_live_data(self, primary, secondary, resolution = "1m", fast = 12, slow = 26, signal = 9, long=100, duration = None, start_time = None):
         now = datetime.now()
@@ -42,10 +76,16 @@ class Bot:
         self.data = data
 
     def step(self):
-        pass
+        self.update_all()
+
 
     def run_clock(self):
-        pass
+        print("Starting clock...")
+        self.swyftx.livestream(self.update_all, interval = resolution_to_seconds[self.resolution])
+
+    def stop_clock(self):
+        self.swyftx.stop_stream()
+        print("Clock stopped.")
 
     def update_all(self, fast=12, slow=26, signal=9, long=100):
         """
@@ -66,7 +106,6 @@ class Bot:
         """
         Calculates and updates all EMA figures. This includes: self.ema_fast, self.ema_slow, and self.ema_hundred.
         *** This assumes that self.data["close"] is 1 period ahead of the aforementioned values.
-        :param period: an integer specifying the period in which we calculate our EMA.
         """
         if self.data is None:
             print("self.data is not defined. Please call 'collect_and_process_live_data'")
@@ -75,7 +114,7 @@ class Bot:
             self.ema_slow.append(self.calculate_latest_ema(self.data["close"][-1], self.ema_slow[-1], slow))
             self.ema_hundred.append(self.calculate_latest_ema(self.data["close"][-1], self.ema_hundred[-1], long))
             self.macd.append(self.calculate_latest_macd())
-            self.macdsignal.append(self.calculate_lastest_macd_signal(signal))
+            self.macdsignal.append(self.calculate_latest_macd_signal(signal))
 
     def update_data(self, d):
         """
@@ -111,7 +150,7 @@ class Bot:
         # Assumes that self.ema_fast and self.ema_slow are already updated.
         return self.ema_fast[-1] - self.ema_slow[-1]
 
-    def calculate_lastest_macd_signal(self, signal=9):
+    def calculate_latest_macd_signal(self, signal=9):
         # Assumes that self.macd is already updated.
         return self.calculate_latest_ema(self.macd[-1], self.macdsignal[-1], signal)
 
@@ -145,11 +184,77 @@ class Bot:
 
         fig.show()
 
+def calculate_next_minute(unix_time):
+    return unix_time + 60 - (unix_time % 60)
+
+"""
+@app.callback(Output("live-graph", "figure"), [Input("graph-update", "interval")])
+def update_graph(d):
+    time = list(bot.data["time"])
+    open_ = list(bot.data["open"])
+    high = list(bot.data["high"])
+    low = list(bot.data["low"])
+    close = list(bot.data["close"])
+
+    candle = go.Candlestick(x=time,open=open_,high=high,low=low,close=close, name="Candle")
+    ema_g = go.Scatter(x=time, y=list(bot.ema_hundred), marker={'color':"orange"}, name="Long EMA")
+
+    macdeez = go.Scatter(x=time, y=list(bot.macd), marker={'color':'blue'}, name="MACD")
+    macdeezsignal = go.Scatter(x=time, y=list(bot.macdsignal), marker={"color":"red"}, name="Signal")
+
+    return {
+        "data": [candle, ema_g, macdeez, macdeezsignal]
+    }
+"""
+@app.callback(Output("live-graph", "figure"), [Input("graph-update", "interval")])
+def update_graph(d):
+    # Live data resources:
+    # https://dash.plotly.com/live-updates
+    # https://realpython.com/python-dash/
+    # https://pythonprogramming.net/live-graphs-data-visualization-application-dash-python-tutorial/
+
+    code = bot.data["assetCode"]
+
+    time = list(bot.data["time"])
+    open_ = list(bot.data["open"])
+    high = list(bot.data["high"])
+    low = list(bot.data["low"])
+    close = list(bot.data["close"])
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing= 0.2)
+    candle = go.Candlestick(x=time,open=open_,high=high,low=low,close=close, name="Candle")
+
+    ema_g = go.Scatter(x=time, y=list(bot.ema_hundred), marker={'color':"orange"}, name="Long EMA")
+
+    fig.add_trace(candle, row=1, col=1)
+    fig.add_trace(ema_g, row=1, col=1)
+
+    macdeez = go.Scatter(x=time, y=list(bot.macd), marker={'color':'blue'}, name="MACD")
+    macdeezsignal = go.Scatter(x=time, y=list(bot.macdsignal), marker={"color":"red"}, name="Signal")
+
+    fig.add_trace(macdeez, row=2, col=1)
+    fig.add_trace(macdeezsignal, row=2, col=1)
+
+    fig.update_layout(title={
+        "text": code,
+        "x": 0.5,
+        "xanchor": "center",
+        "yanchor": "top"
+    })
+
+    return fig
+
+
+next_interval = {
+    "1m": calculate_next_minute,
+}
+
 with open("key.txt", "r") as f:
     key = f.readline()
 
+bot = Bot(key)
+
 if '__main__' == __name__:
-    bot = Bot(key)
+    pass
     #swag = SwagX(key)
     #d_buy = swag.get_asset_data("AUD", "BTC", "ask", "1m", datetime(2021,11,24), datetime.now())
     #nd_buy = extract_price_data(d_buy)

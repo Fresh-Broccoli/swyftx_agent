@@ -38,6 +38,7 @@ class SwagX:
         self._blacklist = blacklist
         self._to_id, self._to_code = self._create_name_id_dict(self.asset_info)
         self.collected_data = {}
+        self.threaded_timer = None
 
     def _authenticate_header(self):
         header = dict(self.default_header)
@@ -302,9 +303,15 @@ class SwagX:
 
     def stream_data(self, primary, secondary, interval=1):
         self.get_live_asset_rates(primary, secondary, print_results=True)
-        timer = RepeatedTimer(interval, self.get_live_asset_rates, primary, secondary,reset_header=False, print_results=True)
+        self.threaded_timer = RepeatedTimer(interval, self.get_live_asset_rates, primary, secondary,reset_header=False, print_results=True)
         #self.session.headers.update(self.default_header)
         #print(self.session.get(endpoints["base"]+"/".join(["charts/resolveSymbol",primary,secondary])).text)
+
+    def livestream(self, func, interval=1, *args, **kwargs):
+        self.threaded_timer = RepeatedTimer(interval, func, *args, **kwargs)
+
+    def stop_stream(self):
+        self.threaded_timer.stop()
 
     def collect_and_process_live_data(self, primary, secondary, duration = None, start_time = None):
         now = datetime.now()
