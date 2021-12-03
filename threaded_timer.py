@@ -37,7 +37,7 @@ class RepeatedTimer(object):
 
 
 class NearestTimer(RepeatedTimer):
-    def __init__(self, resolution, function, *args, **kwargs):
+    def __init__(self, resolution, function, delay = 0, *args, **kwargs):
         self.resolution = resolution
         self._timer = None
         self.interval = resolution_to_seconds[resolution]
@@ -45,16 +45,17 @@ class NearestTimer(RepeatedTimer):
         self.args = args
         self.kwargs = kwargs
         self.is_running = False
-        print("Start time: ")
-        print(datetime.now())
+        self.delay = delay
+        #print("Start time: ")
+        #print(datetime.now())
         self.start()
 
     def start(self):
         if not self.is_running:
             now = datetime.now().timestamp()
             start_time = next_interval[self.resolution](now)
-            print("The clock will start at: ")
-            print(datetime.fromtimestamp(start_time))
-            self._timer = threading.Timer(start_time - time(), self._run)
+            print("The next execution will start at: ")
+            print(datetime.fromtimestamp(start_time) + self.delay)
+            self._timer = threading.Timer(start_time - time() + self.delay, self._run)
             self._timer.start()
             self.is_running = True

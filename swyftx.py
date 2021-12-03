@@ -5,9 +5,10 @@ import numpy as np
 
 from collections import deque
 from datetime import datetime, timedelta
-from threaded_timer import RepeatedTimer
+from threaded_timer import NearestTimer
 from talib import MACD, EMA
-
+from time import time
+from nearest import erase_seconds, resolution_to_seconds
 # API documentation: https://swyftx.docs.apiary.io/
 
 endpoints = {
@@ -226,7 +227,7 @@ class SwagX:
 
         self.session.headers.update(self.default_header)
         d = json.loads(self.session.get(endpoints[
-                                 "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, "timeStart="+time_start,"timeEnd="+time_end])])).text)["candles"]
+                                 "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, f"timeStart={int(time_start)}",f"timeEnd={int(time_end)}"])])).text)["candles"]
         if readable_time:
             for i in range(len(d)):
                 d[i]["time"] = datetime.fromtimestamp(int(d[i]["time"])/1000)
@@ -235,9 +236,32 @@ class SwagX:
             "data":d
         }
 
+    def get_last_completed_data(self, primary, secondary, side, resolution):
+        """
+        Gets the last completed bar (as per resolution) and returns that data.
+        :return: a dictionary in the form of:
+            {
+                "side",
+                "bid",
+                "time",
+                "open",
+                "close",
+                "low",
+                "high"
+            }
+        """
+        end = (erase_seconds(time()) + 1) * 1000
+        start = end - resolution_to_seconds[resolution]*1000
+        #print("Start time: ", datetime.fromtimestamp(start/1000))
+        #print("End time: ", datetime.fromtimestamp(end/1000))
+        d = json.loads(self.session.get(endpoints[
+                                            "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, f"timeStart={int(start)}",f"timeEnd={int(end)}"])])).text)["candles"]
+        return d[0]
+
+
     def get_latest_asset_data(self, primary, secondary, side, resolution, stream=False):
         """
-        Gets the most recent completed bar of data for primary asset in terms of its value in the secondary asset.
+        Gets the most recent price data for secondary asset in terms of its value in the primary asset.
         :param primary: The asset that we'll use to evaluate the value of the secondary asset.
         :param secondary: The asset that we're interested in.
         :param side: Determines whether we're looking for the 'ask' or 'bid' price.
@@ -260,12 +284,11 @@ class SwagX:
             del d["volume"]
             return d
         else:
-            #r = self.session.get(endpoints["base"] + "charts/getLatestBar/" + "/".join([primary,secondary,side,"?resolution="+resolution]), stream=True)
-            #print(r.text)
             with self.session.get(endpoints["base"] + "charts/getLatestBar/" + "/".join([primary,secondary,side,"?resolution="+resolution]), stream=True) as resp:
                 for line in resp.iter_lines():
                     if line:
                         print(line)
+
 
     def extract_price_data(self, data, max_length = None):
         if max_length is None:
@@ -301,14 +324,16 @@ class SwagX:
             return r[secondary]
 
 
-    def stream_data(self, primary, secondary, interval=1):
-        self.get_live_asset_rates(primary, secondary, print_results=True)
-        self.threaded_timer = RepeatedTimer(interval, self.get_live_asset_rates, primary, secondary,reset_header=False, print_results=True)
+    def stream_data(self, primary, secondary, resolution):
+        #self.get_live_asset_rates(primary, secondary, print_results=True)
+        self.threaded_timer = NearestTimer(resolution, self.get_live_asset_rates, primary, secondary, print_results=True)
+        #self.threaded_timer = RepeatedTimer(interval, self.get_live_asset_rates, primary, secondary,reset_header=False, print_results=True)
         #self.session.headers.update(self.default_header)
         #print(self.session.get(endpoints["base"]+"/".join(["charts/resolveSymbol",primary,secondary])).text)
 
-    def livestream(self, func, interval=1, *args, **kwargs):
-        self.threaded_timer = RepeatedTimer(interval, func, *args, **kwargs)
+    def livestream(self, delay = 1, *args, **kwargs):
+        self.threaded_timer = NearestTimer(delay = delay, *args, **kwargs)
+        #self.threaded_timer = RepeatedTimer(interval, func, *args, **kwargs)
 
     def stop_stream(self):
         self.threaded_timer.stop()

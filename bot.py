@@ -9,8 +9,9 @@ from plotly.subplots import make_subplots
 from swyftx import SwagX
 from datetime import datetime, timedelta
 from talib import EMA
-from time import sleep
+from time import time
 from dash.dependencies import Output, Input
+from nearest import erase_seconds
 
 resolution_to_seconds = {
     "1m":60,
@@ -31,8 +32,8 @@ class Bot:
         print("Bot created. Please call 'collect_and_process_live_data' to start trading a particular cryptocurrency.")
         print("-"*110)
 
-    def quick_start(self, primary, secondary, resolution = "1m", fast = 12, slow = 26, signal = 9, long=100, duration = None, start_time = None, graph=False):
-        self.collect_and_process_live_data(primary, secondary, resolution, fast, slow, signal, long, duration, start_time)
+    def quick_start(self, primary, secondary, resolution = "1m", fast = 12, slow = 26, signal = 9, long=100,  whole_resolution = True, start_time = None, end_time = None, graph=False):
+        self.collect_and_process_live_data(primary, secondary, resolution, fast, slow, signal, long, whole_resolution, start_time, end_time)
         if graph:
             app.layout = html.Div(
                 [
@@ -41,6 +42,7 @@ class Bot:
                                  interval=1000*resolution_to_seconds[resolution])
                 ]
             )
+            self.run_clock()
             app.run_server(debug=False)
         # There are 2 possibilities after this point.
         # 1. The next interval has already started (very rare, only realistically happens when interval="1m")
@@ -49,20 +51,24 @@ class Bot:
         #   Call update_all()
         #   Save the time after the previous execution
         #   Call calculate_next_..., calculate the time it takes
-        now = datetime.now().timestamp()
-        elapse = next_interval[resolution](now) - now
-        print("Waiting for " + str(elapse) + " seconds until the next minute...")
-        sleep(elapse)
+        else:
+            self.run_clock()
 
-    def collect_and_process_live_data(self, primary, secondary, resolution = "1m", fast = 12, slow = 26, signal = 9, long=100, duration = None, start_time = None):
-        now = datetime.now()
+    def collect_and_process_live_data(self, primary, secondary, resolution = "1m", fast = 12, slow = 26, signal = 9, long=100, whole_resolution=True, start_time = None, end_time = None):
+        now = end_time
+        if end_time is None:
+            now = time()
+        if whole_resolution:
+            now = erase_seconds(now) - 60
+
         if start_time is None:
             # If there's no specified start time, it will be set 24 hours before the time this line is executed.
-            start_time = now - timedelta(days=1)
+            start_time = now - 24*60*60
+
         self.primary = primary
         self.secondary = secondary
         self.resolution = resolution
-        data = self.swyftx.extract_price_data(self.swyftx.get_asset_data(primary, secondary, "ask", resolution, start_time, now, True))
+        data = self.swyftx.extract_price_data(self.swyftx.get_asset_data(primary, secondary, "ask", resolution, start_time * 1000, now * 1000, True))
         #data_bid = self.extract_price_data(self.get_asset_data(primary, secondary, "bid", "1m", start_time, now, True))
         max_length = len(data["close"])
         ema_fast = EMA(np.array(data["close"]), fast)
@@ -79,9 +85,9 @@ class Bot:
         self.update_all()
 
 
-    def run_clock(self):
+    def run_clock(self, **kwargs):
         print("Starting clock...")
-        self.swyftx.livestream(self.update_all, interval = resolution_to_seconds[self.resolution])
+        self.swyftx.livestream(delay = 2, function = self.update_all, resolution = self.resolution, **kwargs)
 
     def stop_clock(self):
         self.swyftx.stop_stream()
@@ -92,7 +98,12 @@ class Bot:
         Function to be called at each step. It retrieves new data from Swyftx, adds it to the deque, calculates new
         values based on new data before adding them to their respective deques.
         """
-        self.update_data(self.swyftx.get_latest_asset_data(self.primary, self.secondary, "ask", self.resolution))
+        print(f"Last close: {self.data['close'][-1]}")
+        print(f"Last time: {self.data['time'][-1]}")
+        self.update_data(self.swyftx.get_last_completed_data(self.primary, self.secondary, "ask", self.resolution))
+        print(f"Updated close: {self.data['close'][-1]}")
+        print(f"Update time: {self.data['time'][-1]}")
+        print("-"*110)
         self.update_all_ema(fast, slow, signal, long)
 
     def update_calculations(self, fast=12, slow=26, signal=9):
@@ -242,11 +253,6 @@ def update_graph(d):
     })
 
     return fig
-
-
-next_interval = {
-    "1m": calculate_next_minute,
-}
 
 with open("key.txt", "r") as f:
     key = f.readline()
