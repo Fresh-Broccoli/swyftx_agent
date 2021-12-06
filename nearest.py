@@ -1,16 +1,16 @@
-def calculate_next_minute(unix_time):
-    return unix_time + 60 - (unix_time % 60)
+def calculate_next_minute(unix_time, delay=0):
+    return unix_time + 60 - (unix_time % 60) + delay
 
-def calculate_next_5_minute(unix_time):
-    return unix_time + 60*5 - (unix_time % (60*5))
-
-
-def calculate_next_half_hour(unix_time):
-    return unix_time + 60*30 - (unix_time % (60*30))
+def calculate_next_5_minute(unix_time, delay=0):
+    return unix_time + 60*5 - (unix_time % (60*5)) + delay
 
 
-def calculate_next_hour(unix_time):
-    return unix_time + 60*60 - (unix_time % (60*60))
+def calculate_next_half_hour(unix_time, delay=0):
+    return unix_time + 60*30 - (unix_time % (60*30)) + delay
+
+
+def calculate_next_hour(unix_time, delay=0):
+    return unix_time + 60*60 - (unix_time % (60*60)) + delay
 
 def erase_seconds(unix_time):
     return calculate_next_minute(unix_time) - 60

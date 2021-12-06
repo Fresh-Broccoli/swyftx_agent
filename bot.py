@@ -38,7 +38,7 @@ class Bot:
             app.layout = html.Div(
                 [
                     dcc.Graph(id="live-graph", animate=True, style={'height': '100vh'}),
-                    dcc.Interval('graph-update',
+                    dcc.Interval(id='graph-update',
                                  interval=1000*resolution_to_seconds[resolution])
                 ]
             )
@@ -217,23 +217,23 @@ def update_graph(d):
         "data": [candle, ema_g, macdeez, macdeezsignal]
     }
 """
-@app.callback(Output("live-graph", "figure"), [Input("graph-update", "interval")])
+@app.callback(Output("live-graph", "figure"), [Input("graph-update", "n_intervals")])
 def update_graph(d):
     # Live data resources:
     # https://dash.plotly.com/live-updates
     # https://realpython.com/python-dash/
     # https://pythonprogramming.net/live-graphs-data-visualization-application-dash-python-tutorial/
-
+    print("Callback executed")
     code = bot.data["assetCode"]
-
-    time = list(bot.data["time"])
-    open_ = list(bot.data["open"])
-    high = list(bot.data["high"])
-    low = list(bot.data["low"])
-    close = list(bot.data["close"])
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing= 0.2)
+    print("Last time: ", bot.data["time"][-1])
+    time = list(bot.data["time"])[-60:]
+    open_ = list(bot.data["open"])[-60:]
+    high = list(bot.data["high"])[-60:]
+    low = list(bot.data["low"])[-60:]
+    close = list(bot.data["close"])[-60:]
+    #fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing= 0.2)
     candle = go.Candlestick(x=time,open=open_,high=high,low=low,close=close, name="Candle")
-
+    """
     ema_g = go.Scatter(x=time, y=list(bot.ema_hundred), marker={'color':"orange"}, name="Long EMA")
 
     fig.add_trace(candle, row=1, col=1)
@@ -251,8 +251,8 @@ def update_graph(d):
         "xanchor": "center",
         "yanchor": "top"
     })
-
-    return fig
+    """
+    return {"data":[candle], "layout": go.Layout(xaxis=dict(range=[min(time), max(time)+timedelta(minutes=1)]), )}#fig
 
 with open("key.txt", "r") as f:
     key = f.readline()

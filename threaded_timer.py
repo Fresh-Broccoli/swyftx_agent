@@ -45,17 +45,23 @@ class NearestTimer(RepeatedTimer):
         self.args = args
         self.kwargs = kwargs
         self.is_running = False
-        self.delay = delay
         #print("Start time: ")
         #print(datetime.now())
+        self.delay = delay
         self.start()
 
     def start(self):
         if not self.is_running:
             now = datetime.now().timestamp()
-            start_time = next_interval[self.resolution](now)
+            start_time = next_interval[self.resolution](now, delay=self.delay) #+ delay
             print("The next execution will start at: ")
-            print(datetime.fromtimestamp(start_time) + self.delay)
-            self._timer = threading.Timer(start_time - time() + self.delay, self._run)
+            print(datetime.fromtimestamp(start_time))
+            self._timer = threading.Timer(start_time - time(), self._run)
             self._timer.start()
             self.is_running = True
+
+if '__main__' == __name__:
+    def print_now():
+        print("The current time is: ", datetime.now())
+
+    timer = NearestTimer("1m", print_now, delay=1)
