@@ -9,9 +9,9 @@ from plotly.subplots import make_subplots
 from swyftx import SwagX
 from datetime import datetime, timedelta
 from talib import EMA
-from time import time
+from time import time, sleep
 from dash.dependencies import Output, Input
-from nearest import erase_seconds
+from nearest import erase_seconds, next_interval
 
 resolution_to_seconds = {
     "1m":60,
@@ -39,10 +39,11 @@ class Bot:
                 [
                     dcc.Graph(id="live-graph", animate=True, style={'height': '100vh'}),
                     dcc.Interval(id='graph-update',
-                                 interval=1000*resolution_to_seconds[resolution])
+                                 interval=1000*resolution_to_seconds[resolution],
+                                 n_intervals=0)
                 ]
             )
-            self.run_clock()
+            #self.run_clock()
             app.run_server(debug=False)
         # There are 2 possibilities after this point.
         # 1. The next interval has already started (very rare, only realistically happens when interval="1m")
@@ -87,7 +88,7 @@ class Bot:
 
     def run_clock(self, **kwargs):
         print("Starting clock...")
-        self.swyftx.livestream(delay = 2, function = self.update_all, resolution = self.resolution, **kwargs)
+        self.swyftx.livestream(function = self.update_all, resolution = self.resolution, **kwargs)
 
     def stop_clock(self):
         self.swyftx.stop_stream()
@@ -105,6 +106,24 @@ class Bot:
         print(f"Update time: {self.data['time'][-1]}")
         print("-"*110)
         self.update_all_ema(fast, slow, signal, long)
+
+    def next_update_all(self,delay=1, fast=12, slow=26, signal=9, long=100):
+        """
+        self.update_all() but it will only run in the next resolution with added delay.
+        :param delay: a number used to determine how many seconds we should delay the actual execution time by.
+        :param fast: integer used to determine the number of periods used to calculate the fast EMA.
+        :param slow: integer used to determine the number of periods used to calculate the slow EMA.
+        :param signal: integer used to determine the number of periods (MACD) used calculate the signal EMA.
+        :param long: integer used to determine the number of periods used to calculate the long EMA
+        """
+        now = time()
+        execution_time = next_interval[self.resolution](now) + delay
+        print("Execution time: ", datetime.fromtimestamp(now))
+        print("Anticipated execution time: ", datetime.fromtimestamp(execution_time))
+        sleep(execution_time-now)
+        print("Actual execution time: ", datetime.now())
+        self.update_all(fast, slow, signal, long)
+        print("Finish time: ", datetime.now())
 
     def update_calculations(self, fast=12, slow=26, signal=9):
         """
@@ -195,9 +214,6 @@ class Bot:
 
         fig.show()
 
-def calculate_next_minute(unix_time):
-    return unix_time + 60 - (unix_time % 60)
-
 """
 @app.callback(Output("live-graph", "figure"), [Input("graph-update", "interval")])
 def update_graph(d):
@@ -223,9 +239,12 @@ def update_graph(d):
     # https://dash.plotly.com/live-updates
     # https://realpython.com/python-dash/
     # https://pythonprogramming.net/live-graphs-data-visualization-application-dash-python-tutorial/
+
     print("Callback executed")
+    bot.next_update_all(0)
     code = bot.data["assetCode"]
-    print("Last time: ", bot.data["time"][-1])
+    #print("Execution time: ", datetime.now())
+    #print("Last time: ", bot.data["time"][-1])
     time = list(bot.data["time"])[-60:]
     open_ = list(bot.data["open"])[-60:]
     high = list(bot.data["high"])[-60:]
@@ -233,12 +252,14 @@ def update_graph(d):
     close = list(bot.data["close"])[-60:]
     #fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing= 0.2)
     candle = go.Candlestick(x=time,open=open_,high=high,low=low,close=close, name="Candle")
+
+
+    #ema_g = go.Scatter(x=time, y=list(bot.ema_hundred), marker={'color':"orange"}, name="Long EMA", mode="lines")
+
+    #fig.add_trace(candle, row=1, col=1)
+    #fig.add_trace(ema_g, row=1, col=1)
+
     """
-    ema_g = go.Scatter(x=time, y=list(bot.ema_hundred), marker={'color':"orange"}, name="Long EMA")
-
-    fig.add_trace(candle, row=1, col=1)
-    fig.add_trace(ema_g, row=1, col=1)
-
     macdeez = go.Scatter(x=time, y=list(bot.macd), marker={'color':'blue'}, name="MACD")
     macdeezsignal = go.Scatter(x=time, y=list(bot.macdsignal), marker={"color":"red"}, name="Signal")
 
