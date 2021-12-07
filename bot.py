@@ -37,7 +37,7 @@ class Bot:
         if graph:
             app.layout = html.Div(
                 [
-                    dcc.Graph(id="live-graph", animate=True, style={'height': '100vh'}),
+                    dcc.Graph(id="live-graph", animate=False, style={'height': '100vh'}),
                     dcc.Interval(id='graph-update',
                                  interval=1000*resolution_to_seconds[resolution],
                                  n_intervals=0)
@@ -234,7 +234,7 @@ def update_graph(d):
     }
 """
 @app.callback(Output("live-graph", "figure"), [Input("graph-update", "n_intervals")])
-def update_graph(d):
+def update_graph(n):
     # Live data resources:
     # https://dash.plotly.com/live-updates
     # https://realpython.com/python-dash/
@@ -250,15 +250,30 @@ def update_graph(d):
     high = list(bot.data["high"])[-60:]
     low = list(bot.data["low"])[-60:]
     close = list(bot.data["close"])[-60:]
-    #fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing= 0.2)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing= 0.2)
+
     candle = go.Candlestick(x=time,open=open_,high=high,low=low,close=close, name="Candle")
+    fig.add_trace(candle, row=1, col=1)
+    ema_g = go.Scatter(x=time, y=list(bot.ema_hundred)[-60:], marker={'color':"orange"}, name="Long EMA")
 
-
-    #ema_g = go.Scatter(x=time, y=list(bot.ema_hundred), marker={'color':"orange"}, name="Long EMA", mode="lines")
-
+    fig.add_trace(ema_g, row=1, col=1)
     #fig.add_trace(candle, row=1, col=1)
     #fig.add_trace(ema_g, row=1, col=1)
 
+    macdeez = go.Scatter(x=time, y=list(bot.macd)[-60:], marker={'color':'blue'}, name="MACD")
+    macdeezsignal = go.Scatter(x=time, y=list(bot.macdsignal)[-60:], marker={"color":"red"}, name="Signal")
+
+    fig.add_trace(macdeez, row=2, col=1)
+    fig.add_trace(macdeezsignal, row=2, col=1)
+
+    fig.update_layout(title={
+        "text": code,
+        "x": 0.5,
+        "xanchor": "center",
+        "yanchor": "top"
+    })
+
+    fig.update_xaxes(rangeslider_visible=False)
     """
     macdeez = go.Scatter(x=time, y=list(bot.macd), marker={'color':'blue'}, name="MACD")
     macdeezsignal = go.Scatter(x=time, y=list(bot.macdsignal), marker={"color":"red"}, name="Signal")
@@ -273,7 +288,7 @@ def update_graph(d):
         "yanchor": "top"
     })
     """
-    return {"data":[candle], "layout": go.Layout(xaxis=dict(range=[min(time), max(time)+timedelta(minutes=1)]), )}#fig
+    return fig#{"data":[candle], "layout": go.Layout(xaxis=dict(range=[min(time), max(time)+timedelta(minutes=1)]), )}
 
 with open("key.txt", "r") as f:
     key = f.readline()
