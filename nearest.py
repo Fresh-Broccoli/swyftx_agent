@@ -33,11 +33,11 @@ def erase_seconds(unix_time):
 
 next_interval = {
     "1m": calculate_next_minute,
-    "3m": calculate_next_3_minute, # Not working as of 10/12/21
+    "3m": calculate_next_3_minute, # Not supported by SwyftX as of 10/12/21
     "5m": calculate_next_5_minute,
-    "10m": calculate_next_10_minute, # Not working as of 10/12/21
-    "15m": calculate_next_15_minute, # Not working as of 10/12/21
-    "30m": calculate_next_half_hour, # Not working as of 10/12/21
+    "10m": calculate_next_10_minute, # Not supported by SwyftX as of 10/12/21
+    "15m": calculate_next_15_minute, # Not supported by SwyftX as of 10/12/21
+    "30m": calculate_next_half_hour, # NNot supported by SwyftX as of 10/12/21
     "1h": calculate_next_hour,
     "4h": calculate_next_4_hour,
     "1d": calculate_next_day

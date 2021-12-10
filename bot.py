@@ -6,11 +6,9 @@ import dash_html_components as html
 import webbrowser
 
 from collections import deque
-
-from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
 from swyftx import SwagX
-from datetime import datetime, timedelta
+from datetime import datetime
 from talib import EMA
 from time import time, sleep
 from dash.dependencies import Output, Input
