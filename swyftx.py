@@ -252,9 +252,9 @@ class SwagX:
         """
         end = (erase_seconds(time()) + 0) * 1000
         start = end - resolution_to_seconds[resolution]*1000
-        print("Start time: ", datetime.fromtimestamp(start/1000))
-        print("End time: ", datetime.fromtimestamp(end/1000))
-        print("Execution Time: ", datetime.now())
+        #print("Start time: ", datetime.fromtimestamp(start/1000))
+        #print("End time: ", datetime.fromtimestamp(end/1000))
+        #print("Execution Time: ", datetime.now())
         d = json.loads(self.session.get(endpoints[
                                             "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, f"timeStart={int(start)}",f"timeEnd={int(end)}"])])).text)["candles"]
         return d[0]
