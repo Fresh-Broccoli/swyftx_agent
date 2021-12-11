@@ -26,6 +26,17 @@ class EmptyTokenError(Exception):
 
 class SwagX:
     def __init__(self, apiKey, mode="demo", blacklist = ["USDT", "USDC", "BUSD"]):
+        """
+        Initialisation for SwyftX agent. Its main purpose is to interact with the SwyftX server such as fetching data
+        and executing bull/sell orders.
+        :param apiKey: a string that is the SwyftX API key. Instructions to creating your own is here:
+            https://help.swyftx.com.au/en/articles/3825168-how-to-create-an-api-key
+        :param mode: a string that determines the mode in which this bot is running. There are two possibilities:
+            'demo': if you want to use SwyftX' demo mode where you have $10k USD to trade.
+            'base': if you want to trade for real.
+        :param blacklist: a list of ticker symbols that represents all secondary assets that we're not interested in
+            trading.
+        """
         self.endpoint = endpoints[mode]
         self.is_demo = True if mode == "demo" else False
         self.key = apiKey
@@ -42,11 +53,24 @@ class SwagX:
         self.threaded_timer = None
 
     def _authenticate_header(self):
+        """
+        Creates the header that is needed for actions that require a higher level of authentication such as placing
+        buy/sell orders.
+        :return: a dictionary that is the header required to obtain permission to execute certain actions.
+        """
         header = dict(self.default_header)
         header["Authorization"] = "Bearer " + self.token
         return header
 
     def _fetch_token(self):
+        """
+        Attempts to retrieve a token from 'token.txt'. If the 'token.txt' doesn't exist, or the token inside is already
+        expired, generate a new token and store it inside 'token.txt'.
+
+        Tokens are required to perform actions that require a higher level of authentication. A notable example is
+        placing buy/sell orders.
+        :return: a string that represents the token.
+        """
         try:
             if datetime.now().timestamp() >= os.path.getmtime("token.txt") + 7 * 24 * 60 * 60:
                 raise OldTokenError
@@ -76,10 +100,32 @@ class SwagX:
                 return t
 
     def _fetch_asset_info(self):
+        """
+        Fetches all assets available on SwyftX.
+        :return: a list of dictionaries in the following structure:
+            {
+                name,
+                altName,
+                code,
+                id,
+                rank,
+                buy,
+                sell,
+                spread,
+                volume24H,
+                marketCap
+            }
+        """
         self.session.headers.update(self.default_header)
         return json.loads(self.session.get(endpoints["base"] + "markets/info/basic/").text)
 
     def _create_name_id_dict(self, assets):
+        """
+        Creates two dictionaries that can convert the id attributed to an asset by SwyftX to its ticker symbol and vice
+        versa.
+        :param assets: a dictionary with the same structure of the output of self._fetch_asset_info()
+        :return: 2 dictionaries that can convert ID to ticker symbol and vice versa.
+        """
         code_to_id = {}
         id_to_code = {}
 
@@ -93,13 +139,40 @@ class SwagX:
         return code_to_id, id_to_code
 
     def to_code(self, iid):
+        """
+        Takes in an id and converts it to the correct asset symbol that the id was referring to.
+        :param iid: a string that represents the id of the asset we're interested in converting.
+        :return: a string that represents the ticker symbol of the asset we're interested in converting.
+        """
         return self._to_code[iid]
 
     def to_id(self, name):
+        """
+        Takes in a ticker symbol and converts it to the correct id that was referring to.
+        :param name: a string that represents the ticker symbol of the asset we're interested in converting.
+        :return: a string that represents the id of the asset we're interested in converting.
+        """
         return self._to_id[name]
 
     def fetch_balance(self, prettify=True):
+        """
+        Fetches data about our wallet.
+        :param prettify: a boolean that determines whether to convert id to ticker symbols such that it's more readable.
+        :return: a list of dictionaries in the structure of:
 
+            if prettify = True:
+                {
+                    assetId,
+                    availableBalance,
+                    code
+                }
+
+            else:
+                {
+                    assetId,
+                    availableBalance
+                }
+        """
         self.session.headers.update(self.authenticate_header)
         balance = json.loads(self.session.get(self.endpoint + "user/balance/").text)
         if prettify:
@@ -206,19 +279,43 @@ class SwagX:
 
     def get_asset_data(self, primary, secondary, side, resolution, time_start, time_end, readable_time=True):
         """
+
         ----------------------------------------------------------------------------------------------------------
         Notes:
         ask refers to the buy price.
         bid refers to the sell price.
         For some reason, SwyftX Unix time has 3 extra digits to the right because they keep track of milliseconds
-            for some reason. So, when converting, remember to multiply my 1000, and dividing by 1000 when
-            translating it to human-readable datetime.
+            So, when converting, remember to multiply my 1000, and dividing by 1000 when translating it to
+            human-readable datetime.
         ----------------------------------------------------------------------------------------------------------
+        :param side: a string that can either be 'ask' or 'bid'.
+        :param resolution: a string that can be one of the following:
+            1m - 1 minute interval
+            5m - 5 minute interval
+            1h - 1 hour interval
+            4h - 4 hour interval
+            1d - 1 day interval
         :param time_start: 2 possibilities - either a string representing unix epoch, or a datetime object.
             Determines the starting time (time of the first bar).
         :param time_end: 2 possibilities - either a string representing unix epoch, or a datetime object.
             Determines the ending time (time of the last bar).
-        :return:
+        :param readable_time: a boolean that will convert time to human-readable time instead of unix time.
+        :return: a dictionary with the following structure:
+            {
+                assetCode,
+                data
+            }
+
+            data is a list of dictionaries with the following structure:
+                {
+                    time,
+                    close,
+                    high,
+                    low,
+                    open,
+                    volume,
+                    name
+                }
         """
         if type(time_start) is datetime:
             time_start = str(1000*int(time_start.timestamp()))
@@ -292,6 +389,22 @@ class SwagX:
 
 
     def extract_price_data(self, data, max_length = None):
+        """
+        Takes in the raw data fetched by self.fetch_asset_data() and converts them into a neater structure.
+        Deques will be used to store data for space efficiency's sake.
+        :param data: output of self.fetch_asset_data()
+        :param max_length: an integer that represents the maximum number of elements that our deques can simultaneously
+            hold. If None, it will be as long as data.
+        :return: a dictionary with the following structure:
+            {
+                assetCode,
+                time,
+                open,
+                close,
+                low,
+                high
+            }
+        """
         if max_length is None:
             max_length = len(data["data"])
         time, open, close, low, high = deque([],max_length), deque([],max_length), deque([],max_length), deque([],max_length), deque([],max_length)
@@ -314,6 +427,14 @@ class SwagX:
         }
 
     def get_live_asset_rates(self, primary, secondary, reset_header = True, print_results=False):
+        """
+
+        :param primary:
+        :param secondary:
+        :param reset_header:
+        :param print_results:
+        :return:
+        """
         primary = self.to_id(primary)
         secondary = self.to_id(secondary)
         if reset_header:
@@ -324,35 +445,21 @@ class SwagX:
         else:
             return r[secondary]
 
-
-    def stream_data(self, primary, secondary, resolution):
-        #self.get_live_asset_rates(primary, secondary, print_results=True)
-        self.threaded_timer = NearestTimer(resolution, self.get_live_asset_rates, primary, secondary, print_results=True)
-        #self.threaded_timer = RepeatedTimer(interval, self.get_live_asset_rates, primary, secondary,reset_header=False, print_results=True)
-        #self.session.headers.update(self.default_header)
-        #print(self.session.get(endpoints["base"]+"/".join(["charts/resolveSymbol",primary,secondary])).text)
-
     def livestream(self, delay = 1, *args, **kwargs):
+        """
+        Livestreams live data directly from SwyftX.
+        While this is running, it's possible to execute other functions.
+        :param args: parameter values for NearestTimer
+        :param kwargs: parameter values for NearestTimer
+        """
         self.threaded_timer = NearestTimer(delay = delay, *args, **kwargs)
         #self.threaded_timer = RepeatedTimer(interval, func, *args, **kwargs)
 
     def stop_stream(self):
+        """
+        Stops livestream.
+        """
         self.threaded_timer.stop()
-
-    def collect_and_process_live_data(self, primary, secondary, duration = None, start_time = None):
-        now = datetime.now()
-        if start_time is None:
-            # If there's no specified start time, it will be set 24 hours before the time this line is executed.
-            start_time = now - timedelta(days=1)
-
-        data = self.extract_price_data(self.get_asset_data(primary, secondary, "ask", "1m", start_time, now, True))
-        #data_bid = self.extract_price_data(self.get_asset_data(primary, secondary, "bid", "1m", start_time, now, True))
-        max_length = len(data["close"])
-        macd, macdsignal, macdhist = MACD(np.array(data["close"]))
-        macd = deque(macd, max_length)
-        macdsignal = deque(macdsignal, max_length)
-        ema_hundred = deque(EMA(np.array(data["close"]), 100), max_length)
-        return macd, macdsignal, ema_hundred
 
 if '__main__' == __name__:
     with open("key.txt", "r") as f:
