@@ -77,7 +77,7 @@ class Bot:
             print("Execution time: ", datetime.fromtimestamp(now))
             print("Anticipated execution time: ", datetime.fromtimestamp(execution_time))
             sleep(execution_time-now)
-            self.run_clock()
+            #self.run_clock()
             Timer(0.1, open_browser).start()
             app.run_server(debug=False, port=port)
         # There are 2 possibilities after this point.
@@ -149,7 +149,7 @@ class Bot:
         :param kwargs: parameter values for self.update_all()
         """
         print("Starting clock...")
-        self.swyftx.livestream(function = self.update_all, resolution = self.resolution, **kwargs)
+        self.swyftx.livestream(function = self.update_all, resolution = self.resolution, delay = 0,**kwargs)
 
     def stop_clock(self):
         """
@@ -169,11 +169,30 @@ class Bot:
         """
         print(f"Last close: {self.data['close'][-1]}")
         print(f"Last time: {self.data['time'][-1]}")
-        self.update_data(self.swyftx.get_last_completed_data(self.primary, self.secondary, "ask", self.resolution))
+        self.update_data(self.swyftx.get_latest_asset_data(self.primary, self.secondary, "ask", self.resolution))
+        #self.update_data(self.swyftx.get_last_completed_data(self.primary, self.secondary, "ask", self.resolution))
         print(f"Updated close: {self.data['close'][-1]}")
         print(f"Update time: {self.data['time'][-1]}")
         print('-'*110)
         self.update_all_ema(fast, slow, signal, long)
+
+    def safe_update_all(self, fast=12, slow=26, signal=9, long=100):
+        """
+        Checks if the fetched data has the same time as the last entry in self.data['time']. If so, ignore, otherwise,
+        same as self.update_all().
+        :param fast: an integer that represents the number of periods considered when calculating the fast EMA.
+        :param slow: an integer that represents the number of periods considered when calculating the slow EMA.
+        :param signal: an integer that represents the number of periods considered when calculating the EMA for MACD.
+        :param long: an integer that represents the number of periods considered when calculating the long EMA.
+        """
+        d = self.swyftx.get_latest_asset_data(self.primary, self.secondary, "ask", self.resolution)
+        if datetime.fromtimestamp(d["time"]/1000) != self.data["time"][-1]:
+            print(f"Last close: {self.data['close'][-1]}")
+            print(f"Last time: {self.data['time'][-1]}")
+            self.update_data(d)
+            print(f"Updated close: {self.data['close'][-1]}")
+            print(f"Update time: {self.data['time'][-1]}")
+            self.update_all_ema(fast, slow, signal, long)
 
     def update_all_ema(self, fast=12, slow=26, signal=9, long=100):
         """
@@ -295,7 +314,7 @@ def update_graph(n):
 
     #print("Callback executed")
     #print("Graph time: ", datetime.now())
-    #bot.next_update_all(0)
+    bot.safe_update_all()
     #bot.update_all()
     code = bot.data["assetCode"]
     #print("Execution time: ", datetime.now())

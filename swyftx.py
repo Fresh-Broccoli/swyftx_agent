@@ -7,8 +7,8 @@ from collections import deque
 from datetime import datetime, timedelta
 from threaded_timer import NearestTimer
 from talib import MACD, EMA
-from time import time
-from nearest import erase_seconds, resolution_to_seconds
+from time import time, sleep
+from nearest import erase_seconds, resolution_to_seconds, next_interval
 # API documentation: https://swyftx.docs.apiary.io/
 
 endpoints = {
@@ -49,6 +49,7 @@ class SwagX:
         self.asset_info = self._fetch_asset_info()
         self._blacklist = blacklist
         self._to_id, self._to_code = self._create_name_id_dict(self.asset_info)
+
         self.collected_data = {}
         self.threaded_timer = None
 
@@ -61,6 +62,31 @@ class SwagX:
         header = dict(self.default_header)
         header["Authorization"] = "Bearer " + self.token
         return header
+
+    def _reshape_asset_info(self):
+        """
+        Converts the output of self._fetch_asset_info() into a dictionary with asset code as key.
+        :return: a dictionary of dictionaries with the following structure:
+            {
+                *asset code*: {
+                                    name,
+                                    altName,
+                                    code,
+                                    id,
+                                    rank,
+                                    buy,
+                                    sell,
+                                    spread,
+                                    volume24H,
+                                    marketCap
+                              }
+            }
+        """
+        out = {}
+        for asset in self.asset_info:
+            out[asset["code"]] = asset
+
+        return out
 
     def _fetch_token(self):
         """
@@ -99,7 +125,7 @@ class SwagX:
                 f.write(t)
                 return t
 
-    def _fetch_asset_info(self):
+    def _fetch_asset_info(self, assetCode = ''):
         """
         Fetches all assets available on SwyftX.
         :return: a list of dictionaries in the following structure:
@@ -117,7 +143,7 @@ class SwagX:
             }
         """
         self.session.headers.update(self.default_header)
-        return json.loads(self.session.get(endpoints["base"] + "markets/info/basic/").text)
+        return json.loads(self.session.get(endpoints["base"] + "markets/info/basic/" + assetCode).text)
 
     def _create_name_id_dict(self, assets):
         """
@@ -347,23 +373,32 @@ class SwagX:
                 "high"
             }
         """
+        #print(f"primary: {primary}, secondary: {secondary}, side: {side}, resolution: {resolution}")
+        print("get_last_completed_data execution time: ", datetime.now())
         end = (erase_seconds(time()) + 0) * 1000
         start = end - resolution_to_seconds[resolution]*1000
-        #print("Start time: ", datetime.fromtimestamp(start/1000))
-        #print("End time: ", datetime.fromtimestamp(end/1000))
+        print("Start time: ", datetime.fromtimestamp(start/1000))
+        print("End time: ", datetime.fromtimestamp(end/1000))
         #print("Execution Time: ", datetime.now())
+
+        #print(self.session.get(endpoints[
+        #                           "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, f"timeStart={int(start)}",f"timeEnd={int(end)}"])])).text)
+        print("Fetch Time: ", datetime.now())
+
         d = json.loads(self.session.get(endpoints[
                                             "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, f"timeStart={int(start)}",f"timeEnd={int(end)}"])])).text)["candles"]
+
         return d[0]
 
 
-    def get_latest_asset_data(self, primary, secondary, side, resolution, stream=False):
+    def get_latest_asset_data(self, primary, secondary, side, resolution, delay=0.3, stream=False):
         """
         Gets the most recent price data for secondary asset in terms of its value in the primary asset.
         :param primary: The asset that we'll use to evaluate the value of the secondary asset.
         :param secondary: The asset that we're interested in.
         :param side: Determines whether we're looking for the 'ask' or 'bid' price.
         :param resolution: The time span that the candles will cover. Possible values include: '1m', '5m', '1h', '4h', '1d'
+        :param delay: A number that determines the time in seconds to delay the execution time by.
         :return: a dictionary in the form of:
             {
                 "side",
@@ -374,7 +409,21 @@ class SwagX:
                 "low",
                 "high"
             }
+        ----------------------------------------------------------------------------------------------------------------
+        So far, it only works well when resolution is set to '1m' or '5m'.
+
+        Upon further testing:
+
+        delay = 0.1 works well for '1m'
+        delay = 0.3 works well for '1m' and '5m'
+        delay = 0.5 doesn't work well for '1m'
+
         """
+        #now = time()
+        #execution_time = next_interval[resolution](now)
+        #print("Execution time: ", datetime.fromtimestamp(now))
+        #print("Anticipated execution time: ", datetime.fromtimestamp(execution_time))
+        #sleep(execution_time-now + delay)
         self.session.headers.update(self.default_header)
         if not stream:
             r = self.session.get(endpoints["base"] + "charts/getLatestBar/" + "/".join([primary,secondary,side,"?resolution="+resolution]))
