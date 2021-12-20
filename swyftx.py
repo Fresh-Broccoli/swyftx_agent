@@ -303,6 +303,95 @@ class SwagX:
         response = self.session.post(self.endpoint + "orders/", data=json.dumps(payload))
         return response
 
+    def stop_loss(self, primary, secondary, quantity, trigger, assetQuantity=None):
+        """
+        Creates a sell order when (buy/sell) price drops to trigger.
+        :primary (string): The currency/asset that we're (already own) trading 'secondary' for. The string represents its symbol, eg: BTC.
+        :secondary (string): The currency/asset that we're (don't own) using 'primary' to trade for. This string represents its symbol.
+        :quantity (string): The amount of 'assetQuantity' that will be spent for this trade.
+        :trigger (string): The price that secondary asset needs to reach in order to execute a sell order.
+        :assetQuantity (string): The amount in terms of whichever currency/asset we specify for this trade to be worth.
+        """
+        if assetQuantity is None:
+            assetQuantity = primary
+
+        payload = {
+            "primary": primary,
+            "secondary": secondary,
+            "quantity": quantity,
+            "assetQuantity": assetQuantity,
+            "orderType": 6,
+            "trigger": 1/float(trigger)
+        }
+        self.session.headers.update(self.authenticate_header)
+        response = self.session.post(self.endpoint + "orders/", data=json.dumps(payload))
+        return response
+
+    def delete_order(self, orderUuid):
+        """
+        Deletes a specific order by its order ID.
+        :param orderUuid: a string that indicates the order ID of a particular order that we're interested in deleting.
+        :return: a dictionary with the following structure if successful:
+            {
+                'orderUuid',
+                'updated_time',
+                'status',
+                'message'
+            }
+
+            Otherwise, it'll look like this:
+            {
+                'error',
+                'message'
+            }
+
+        """
+        self.session.headers.update(self.authenticate_header)
+        response = self.session.delete(self.endpoint + "orders/" + orderUuid + "/")
+        return response
+
+    def delete_last_order(self, assetCode=""):
+        """
+        Cancels the latest order. If we want to delete the last order for a specific asset, change orderUuid, otherwise
+        it'll just delete the last asset.
+        :param assetCode: a string that denotes the order for a specific asset.
+        :return:
+        """
+        return self.delete_order(self.list_recent_order(assetCode)[-1]["orderUuid"])
+
+    def list_recent_order(self, assetCode, limit="", page=""):
+        """
+        Returns a list of dictionaries about recent orders.
+        :param assetCode: a string that indicates the
+        :param limit: a string that represents the number of entries (orders) we're interested in getting.
+        :param page: **Honestly, I have no idea. Best to leave it blank.
+        :return: a list of dictionaries in the form:
+            {
+                "orderUuid": order ID,
+                "order_type": order type,
+                "primary_asset",
+                "secondary_asset",
+                "quantity_asset": value in which quantity is evaluated in,
+                "quantity": the number of asset indicated by "quantity_asset",
+                "trigger",
+                "status": a numerical digit that indicates the status of the order. ,
+                "created_time",
+                "updated_time",
+                "amount": amount of secondary asset bought,
+                "total": amount of primary asset sold,
+                "rate": primary/secondary ratio for this particular trade,
+                "audValue",
+                "userCountryValue",
+                "feeAmount": fees charged in terms of the primary asset,
+                "feeAsset",
+                "feeAudValue",
+                "feeUserCountryValue"
+              }
+        """
+        self.session.headers.update(self.authenticate_header)
+        response = self.session.get(self.endpoint + "orders/" + "?".join([assetCode, limit, page]))
+        return json.loads(response.text)["orders"]
+
     def get_asset_data(self, primary, secondary, side, resolution, time_start, time_end, readable_time=True):
         """
 
