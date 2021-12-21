@@ -54,3 +54,4 @@ resolution_to_seconds = {
     "4h": 60*60*4,
     "1d": 60*60*24
 }
+resolution_rank = ["1m", "5m", "1h", "4h", "1d"]

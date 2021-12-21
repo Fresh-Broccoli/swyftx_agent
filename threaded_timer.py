@@ -64,4 +64,4 @@ if '__main__' == __name__:
     def print_now():
         print("The current time is: ", datetime.now())
 
-    timer = NearestTimer("1m", print_now, delay=1)
+    timer = NearestTimer("1m", print_now, delay=0)

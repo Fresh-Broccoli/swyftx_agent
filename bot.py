@@ -31,7 +31,7 @@ class Bot:
         """
         self.key = key
         self.swyftx = SwagX(key, mode)
-        self.ema_fast, self.ema_slow, self.macd, self.ema_hundred, self.macdsignal, self.data, self.primary, self.secondary, self.resolution, self.app = None,None,None,None,None,None, None, None, None, None
+        self.ema_fast, self.ema_slow, self.macd, self.ema_hundred, self.macdsignal, self.data, self.primary, self.secondary, self.resolution, self.swing_low, self.last_macd, self.last_signal, self.cross, self.macd_gradient, self.signal_gradient, self.app = None,None,None,None,None,None, None, None, None, None, None, None, None, None, None, None
         print("-"*110)
         print("Bot created. Please call 'collect_and_process_live_data' to start trading a particular cryptocurrency.")
         print("-"*110)
@@ -88,9 +88,9 @@ class Bot:
         #   Save the time after the previous execution
         #   Call calculate_next_..., calculate the time it takes
         else:
-            self.run_clock()
+            self.run_clock(self.resolution)
 
-    def collect_and_process_live_data(self, primary, secondary, resolution = "1m", fast = 12, slow = 26, signal = 9, long=100, whole_resolution=True, start_time = None, end_time = None):
+    def collect_and_process_live_data(self, primary, secondary, resolution = "1m", fast = 12, slow = 26, signal = 9, long=100, swing_period=60, whole_resolution=True, start_time = None, end_time = None):
         """
         Gathers and calculates initial data and financial figures. This function needs to be called for the bot to work.
         :param primary: a string that represents the ticker symbol of the asset that we'll use to evaluate the value of
@@ -102,6 +102,8 @@ class Bot:
         :param slow: an integer that represents the number of periods considered when calculating the slow EMA.
         :param signal: an integer that represents the number of periods considered when calculating the EMA for MACD.
         :param long: an integer that represents the number of periods considered when calculating the long EMA.
+        :param swing_period: an integer that determines the number of periods up till now to consider when determining
+            the minimum swing low.
         :param whole_resolution: a boolean that will set the end time to the last completed resolution.
         :param start_time: a number or datetime object that determines the start time when we initially gather
             historical data relating to the secondary asset.
@@ -137,19 +139,21 @@ class Bot:
         self.ema_slow = deque(ema_slow, max_length)
         self.macd = deque(macd, max_length)
         self.ema_hundred = deque(EMA(np.array(data["close"]), long), max_length)
+        self.swing_low = min(list(data["low"])[swing_period*(-1):]) # Could be subjected to change. Also considering 'close'.
         self.data = data
 
     def step(self):
         self.update_all()
 
-    def run_clock(self, **kwargs):
+
+    def run_clock(self, resolution, **kwargs):
         """
         Livestreams live data directly from SwyftX, saves it locally, and calculates relevant financial figures.
         While this is running, it's possible to execute other functions.
         :param kwargs: parameter values for self.update_all()
         """
         print("Starting clock...")
-        self.swyftx.livestream(function = self.update_all, resolution = self.resolution, delay = 0,**kwargs)
+        self.swyftx.livestream(function = self.update_all, resolution = resolution, delay = 0,**kwargs)
 
     def stop_clock(self):
         """
@@ -174,7 +178,10 @@ class Bot:
         print(f"Updated close: {self.data['close'][-1]}")
         print(f"Update time: {self.data['time'][-1]}")
         print('-'*110)
-        self.update_all_ema(fast, slow, signal, long)
+        self.update_financial_figures(fast, slow, signal, long)
+        print("MACD crossed Signal: ", self.cross)
+        if self.cross:
+            self.stop_clock()
 
     def safe_update_all(self, fast=12, slow=26, signal=9, long=100):
         """
@@ -192,9 +199,9 @@ class Bot:
             self.update_data(d)
             print(f"Updated close: {self.data['close'][-1]}")
             print(f"Update time: {self.data['time'][-1]}")
-            self.update_all_ema(fast, slow, signal, long)
+            self.update_financial_figures(fast, slow, signal, long)
 
-    def update_all_ema(self, fast=12, slow=26, signal=9, long=100):
+    def update_financial_figures(self, fast=12, slow=26, signal=9, long=100):
         """
         Calculates and updates all EMA figures. This includes: self.ema_fast, self.ema_slow, and self.ema_hundred.
         *** This assumes that self.data["close"] is 1 period ahead of the aforementioned values.
@@ -209,8 +216,12 @@ class Bot:
             self.ema_fast.append(self.calculate_latest_ema(self.data["close"][-1], self.ema_fast[-1], fast))
             self.ema_slow.append(self.calculate_latest_ema(self.data["close"][-1], self.ema_slow[-1], slow))
             self.ema_hundred.append(self.calculate_latest_ema(self.data["close"][-1], self.ema_hundred[-1], long))
-            self.macd.append(self.calculate_latest_macd())
-            self.macdsignal.append(self.calculate_latest_macd_signal(signal))
+            self.last_macd = self.calculate_latest_macd()
+            self.macd.append(self.last_macd)
+            self.last_signal = self.calculate_latest_macd_signal(signal)
+            self.macdsignal.append(self.last_signal)
+            self.macd_gradient, self.signal_gradient = self.calculate_latest_gradients()
+            self.cross = self.macd_cross()
 
     def update_data(self, d):
         """
@@ -223,6 +234,7 @@ class Bot:
         self.data["close"].append(float(d["close"]))
         self.data["low"].append(float(d["low"]))
         self.data["high"].append(float(d["high"]))
+        self.update_swing_low(float(d["low"]))
 
     def undo_all_data(self):
         self.data["time"].pop()
@@ -267,6 +279,30 @@ class Bot:
         :return: the latest MACD signal value.
         """
         return self.calculate_latest_ema(self.macd[-1], self.macdsignal[-1], signal)
+
+    def update_swing_low(self, value):
+        """
+        Checks to see if the newest value is less than the current swing low or not. If so, set self.swing_low to the
+        latest value.
+        """
+        if self.swing_low > value:
+            self.swing_low = value
+
+    def calculate_latest_gradients(self):
+        """
+        Calculates the change in terms of financial figures.
+        :return: gradients for MACD and MACD signal respectively.
+        """
+        return self.macd[-1] - self.macd[-2], self.macdsignal[-1] - self.macdsignal[-2]
+
+    def macd_cross(self):
+        """
+        Checks to see if MACD has crossed the signal from below.
+        An interesting note is that if this function returns True, then the next call will return False (assuming that
+        the data, MACD, and MACD signal have been properly updated once)
+        :return: a boolean
+        """
+        return self.macd[-2] < self.macdsignal[-2] and self.macd[-1] > self.macdsignal[-1]
 
     def plot(self):
         """
