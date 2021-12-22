@@ -57,7 +57,8 @@ class Bot:
         :param graph: a boolean that determines whether we'll be graphing our collected data or not. It's
             recommended that we set this to False because it can slow everything down.
         """
-        self.collect_and_process_live_data(primary, secondary, resolution, fast, slow, signal, long, whole_resolution, start_time, end_time)
+        self.collect_and_process_live_data(primary, secondary, resolution, fast, slow, signal, long, start_time=start_time, end_time=end_time, whole_resolution=whole_resolution)
+
         if graph:
             #now = time()
             #execution_time = next_interval[self.resolution](now)
@@ -77,7 +78,6 @@ class Bot:
             print("Execution time: ", datetime.fromtimestamp(now))
             print("Anticipated execution time: ", datetime.fromtimestamp(execution_time))
             sleep(execution_time-now)
-            #self.run_clock()
             Timer(0.1, open_browser).start()
             app.run_server(debug=False, port=port)
         # There are 2 possibilities after this point.
@@ -117,7 +117,9 @@ class Bot:
             now = end_time.timestamp()
 
         if whole_resolution:
+            print("Before: ", datetime.fromtimestamp(now))
             now = erase_seconds(now) - 60 # Gets data from start_time to the start of the current minute.
+            print("After: ", datetime.fromtimestamp(now))
 
         if start_time is None:
             # If there's no specified start time, it will be set 24 hours before the time this line is executed.
@@ -125,6 +127,8 @@ class Bot:
         elif type(start_time) is datetime:
             start_time = start_time.timestamp()
 
+        print("start_time: ", datetime.fromtimestamp(start_time))
+        print("now: ", datetime.fromtimestamp(now))
         self.primary = primary
         self.secondary = secondary
         self.resolution = resolution
@@ -134,7 +138,7 @@ class Bot:
         ema_fast = EMA(np.array(data["close"]), fast)
         ema_slow = EMA(np.array(data["close"]), slow)
         macd = ema_fast - ema_slow
-        self.macdsignal = deque(EMA(macd, signal))
+        self.macdsignal = deque(EMA(macd, signal)[len(data["time"])*(-1):])
         self.ema_fast = deque(ema_fast, max_length)
         self.ema_slow = deque(ema_slow, max_length)
         self.macd = deque(macd, max_length)
@@ -302,12 +306,20 @@ class Bot:
         the data, MACD, and MACD signal have been properly updated once)
         :return: a boolean
         """
+
+        #print("Last MACD: ",self.macd[-2] )
+        #print("Last signal: ", self.macdsignal[-2])
+
+        #print("Current MACD: ", self.macd[-1])
+        #print("Current signal: ", self.macdsignal[-1])
         return self.macd[-2] < self.macdsignal[-2] and self.macd[-1] > self.macdsignal[-1]
 
-    def plot(self):
+    def plot(self, last=None):
         """
         Plots the data that is currently stored inside Bot.
         """
+        if last is None:
+            last = 0
         code = self.data["assetCode"]
         time = list(self.data["time"])
         open_ = list(self.data["open"])

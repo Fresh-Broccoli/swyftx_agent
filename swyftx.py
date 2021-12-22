@@ -432,6 +432,8 @@ class SwagX:
                     name
                 }
         """
+        #print("time_start: ", datetime.fromtimestamp(time_start/1000))
+        #print("time_end: ", datetime.fromtimestamp(time_end/1000))
         if type(time_start) is datetime:
             time_start = str(1000*int(time_start.timestamp()))
         if type(time_end) is datetime:
