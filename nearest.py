@@ -31,6 +31,15 @@ def calculate_next_interval(unix_time, interval, delay=0):
 def erase_seconds(unix_time):
     return calculate_next_minute(unix_time) - 60
 
+def check_rank(resolution):
+    return resolution_rank.index(resolution)
+
+def rank_up(resolution, by=1):
+    return resolution_rank[resolution_rank.index(resolution)+by]
+
+def rank_down(resolution, by=1):
+    return resolution_rank[resolution_rank.index(resolution)-by]
+
 next_interval = {
     "1m": calculate_next_minute,
     "3m": calculate_next_3_minute, # Not supported by SwyftX as of 10/12/21
@@ -55,3 +64,5 @@ resolution_to_seconds = {
     "1d": 60*60*24
 }
 resolution_rank = ["1m", "5m", "1h", "4h", "1d"]
+
+no_of_resolutions = len(resolution_rank)

@@ -12,7 +12,7 @@ from datetime import datetime
 from talib import EMA
 from time import time, sleep
 from dash.dependencies import Output, Input
-from nearest import erase_seconds, next_interval, resolution_to_seconds
+from nearest import erase_seconds, next_interval, resolution_to_seconds, check_rank, rank_up, rank_down, no_of_resolutions
 from threading import Timer
 
 port = 5000
@@ -31,7 +31,10 @@ class Bot:
         """
         self.key = key
         self.swyftx = SwagX(key, mode)
-        self.ema_fast, self.ema_slow, self.macd, self.ema_hundred, self.macdsignal, self.data, self.primary, self.secondary, self.resolution, self.swing_low, self.last_macd, self.last_signal, self.cross, self.macd_gradient, self.signal_gradient, self.app = None,None,None,None,None,None, None, None, None, None, None, None, None, None, None, None
+        self.ema_fast, self.ema_slow, self.macd, self.ema_hundred, self.macdsignal, self.data = [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)]
+        self.primary, self.secondary, self.resolution, self.swing_low, self.last_macd, self.last_signal, self.cross, self.macd_gradient, self.signal_gradient, self.buy_signal, self.bull, self.app = None,None, None, None, None, None, None, None, None, None, None, None
+        self.fast, self.slow, self.signal, self.long = None, None, None, None
+        self.counter = 0 # Delete this later
         print("-"*110)
         print("Bot created. Please call 'collect_and_process_live_data' to start trading a particular cryptocurrency.")
         print("-"*110)
@@ -58,6 +61,7 @@ class Bot:
             recommended that we set this to False because it can slow everything down.
         """
         self.collect_and_process_live_data(primary, secondary, resolution, fast, slow, signal, long, start_time=start_time, end_time=end_time, whole_resolution=whole_resolution)
+        self.fast, self.slow, self.signal, self.long = fast, slow, signal, long
 
         if graph:
             #now = time()
@@ -88,7 +92,7 @@ class Bot:
         #   Save the time after the previous execution
         #   Call calculate_next_..., calculate the time it takes
         else:
-            self.run_clock(self.resolution)
+            self.run_clock(resolution=self.resolution)
 
     def collect_and_process_live_data(self, primary, secondary, resolution = "1m", fast = 12, slow = 26, signal = 9, long=100, swing_period=60, whole_resolution=True, start_time = None, end_time = None):
         """
@@ -117,9 +121,9 @@ class Bot:
             now = end_time.timestamp()
 
         if whole_resolution:
-            print("Before: ", datetime.fromtimestamp(now))
+            #print("Before: ", datetime.fromtimestamp(now))
             now = erase_seconds(now) - 60 # Gets data from start_time to the start of the current minute.
-            print("After: ", datetime.fromtimestamp(now))
+            #print("After: ", datetime.fromtimestamp(now))
 
         if start_time is None:
             # If there's no specified start time, it will be set 24 hours before the time this line is executed.
@@ -127,8 +131,8 @@ class Bot:
         elif type(start_time) is datetime:
             start_time = start_time.timestamp()
 
-        print("start_time: ", datetime.fromtimestamp(start_time))
-        print("now: ", datetime.fromtimestamp(now))
+        #print("start_time: ", datetime.fromtimestamp(start_time))
+        #print("now: ", datetime.fromtimestamp(now))
         self.primary = primary
         self.secondary = secondary
         self.resolution = resolution
@@ -138,26 +142,26 @@ class Bot:
         ema_fast = EMA(np.array(data["close"]), fast)
         ema_slow = EMA(np.array(data["close"]), slow)
         macd = ema_fast - ema_slow
-        self.macdsignal = deque(EMA(macd, signal)[len(data["time"])*(-1):])
-        self.ema_fast = deque(ema_fast, max_length)
-        self.ema_slow = deque(ema_slow, max_length)
-        self.macd = deque(macd, max_length)
-        self.ema_hundred = deque(EMA(np.array(data["close"]), long), max_length)
+        self.macdsignal[check_rank(self.resolution)] = deque(EMA(macd, signal)[len(data["time"])*(-1):])
+        self.ema_fast[check_rank(self.resolution)] = deque(ema_fast, max_length)
+        self.ema_slow[check_rank(self.resolution)] = deque(ema_slow, max_length)
+        self.macd[check_rank(self.resolution)] = deque(macd, max_length)
+        self.ema_hundred[check_rank(self.resolution)] = deque(EMA(np.array(data["close"]), long), max_length)
         self.swing_low = min(list(data["low"])[swing_period*(-1):]) # Could be subjected to change. Also considering 'close'.
-        self.data = data
+        self.data[check_rank(self.resolution)] = data
 
     def step(self):
         self.update_all()
 
 
-    def run_clock(self, resolution, **kwargs):
+    def run_clock(self, **kwargs):
         """
         Livestreams live data directly from SwyftX, saves it locally, and calculates relevant financial figures.
         While this is running, it's possible to execute other functions.
         :param kwargs: parameter values for self.update_all()
         """
         print("Starting clock...")
-        self.swyftx.livestream(function = self.update_all, resolution = resolution, delay = 0,**kwargs)
+        self.swyftx.livestream(function = self.update_all,**kwargs)
 
     def stop_clock(self):
         """
@@ -175,17 +179,25 @@ class Bot:
         :param signal: an integer that represents the number of periods considered when calculating the EMA for MACD.
         :param long: an integer that represents the number of periods considered when calculating the long EMA.
         """
-        print(f"Last close: {self.data['close'][-1]}")
-        print(f"Last time: {self.data['time'][-1]}")
-        self.update_data(self.swyftx.get_latest_asset_data(self.primary, self.secondary, "ask", self.resolution))
-        #self.update_data(self.swyftx.get_last_completed_data(self.primary, self.secondary, "ask", self.resolution))
-        print(f"Updated close: {self.data['close'][-1]}")
-        print(f"Update time: {self.data['time'][-1]}")
+        print(f"Last close: {self.data[check_rank(self.resolution)]['close'][-1]}")
+        print(f"Last time: {self.data[check_rank(self.resolution)]['time'][-1]}")
+        #self.update_data(self.swyftx.get_latest_asset_data(self.primary, self.secondary, "ask", self.resolution))
+        self.update_data(self.swyftx.get_last_completed_data(self.primary, self.secondary, "ask", self.resolution))
+        print(f"Updated close: {self.data[check_rank(self.resolution)]['close'][-1]}")
+        print(f"Update time: {self.data[check_rank(self.resolution)]['time'][-1]}")
         print('-'*110)
         self.update_financial_figures(fast, slow, signal, long)
         print("MACD crossed Signal: ", self.cross)
-        if self.cross:
+        if self.counter < 1:#self.check_macro_buy_signal(): # Buy condition/signal
+            # Stop clock
+            # Create
+
             self.stop_clock()
+            #self.resolution = rank_down(self.resolution)
+            self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary, resolution=rank_down(self.resolution))
+            #self.quick_start(self.primary, self.secondary, resolution=rank_down(self.resolution), fast=self.fast, slow=self.slow, signal=self.signal, long=self.long)
+            self.run_clock(resolution=self.resolution)
+            self.counter += 1
 
     def safe_update_all(self, fast=12, slow=26, signal=9, long=100):
         """
@@ -197,12 +209,12 @@ class Bot:
         :param long: an integer that represents the number of periods considered when calculating the long EMA.
         """
         d = self.swyftx.get_latest_asset_data(self.primary, self.secondary, "ask", self.resolution)
-        if datetime.fromtimestamp(d["time"]/1000) != self.data["time"][-1]:
-            print(f"Last close: {self.data['close'][-1]}")
-            print(f"Last time: {self.data['time'][-1]}")
+        if datetime.fromtimestamp(d["time"]/1000) != self.data[check_rank(self.resolution)]["time"][-1]:
+            print(f"Last close: {self.data[check_rank(self.resolution)]['close'][-1]}")
+            print(f"Last time: {self.data[check_rank(self.resolution)]['time'][-1]}")
             self.update_data(d)
-            print(f"Updated close: {self.data['close'][-1]}")
-            print(f"Update time: {self.data['time'][-1]}")
+            print(f"Updated close: {self.data[check_rank(self.resolution)]['close'][-1]}")
+            print(f"Update time: {self.data[check_rank(self.resolution)]['time'][-1]}")
             self.update_financial_figures(fast, slow, signal, long)
 
     def update_financial_figures(self, fast=12, slow=26, signal=9, long=100):
@@ -214,16 +226,16 @@ class Bot:
         :param signal: an integer that represents the number of periods considered when calculating the EMA for MACD.
         :param long: an integer that represents the number of periods considered when calculating the long EMA.
         """
-        if self.data is None:
+        if self.data[check_rank(self.resolution)] is None:
             print("self.data is not defined. Please call 'collect_and_process_live_data'")
         else:
-            self.ema_fast.append(self.calculate_latest_ema(self.data["close"][-1], self.ema_fast[-1], fast))
-            self.ema_slow.append(self.calculate_latest_ema(self.data["close"][-1], self.ema_slow[-1], slow))
-            self.ema_hundred.append(self.calculate_latest_ema(self.data["close"][-1], self.ema_hundred[-1], long))
+            self.ema_fast[check_rank(self.resolution)].append(self.calculate_latest_ema(self.data[check_rank(self.resolution)]["close"][-1], self.ema_fast[check_rank(self.resolution)][-1], fast))
+            self.ema_slow[check_rank(self.resolution)].append(self.calculate_latest_ema(self.data[check_rank(self.resolution)]["close"][-1], self.ema_slow[check_rank(self.resolution)][-1], slow))
+            self.ema_hundred.append(self.calculate_latest_ema(self.data[check_rank(self.resolution)]["close"][-1], self.ema_hundred[check_rank(self.resolution)][-1], long))
             self.last_macd = self.calculate_latest_macd()
-            self.macd.append(self.last_macd)
+            self.macd[check_rank(self.resolution)].append(self.last_macd)
             self.last_signal = self.calculate_latest_macd_signal(signal)
-            self.macdsignal.append(self.last_signal)
+            self.macdsignal[check_rank(self.resolution)].append(self.last_signal)
             self.macd_gradient, self.signal_gradient = self.calculate_latest_gradients()
             self.cross = self.macd_cross()
 
@@ -233,11 +245,11 @@ class Bot:
         the function.
         :param d: data dictionary returned by self.swyftx.get_latest_asset_data()
         """
-        self.data["time"].append(datetime.fromtimestamp(d["time"]/1000))
-        self.data["open"].append(float(d["open"]))
-        self.data["close"].append(float(d["close"]))
-        self.data["low"].append(float(d["low"]))
-        self.data["high"].append(float(d["high"]))
+        self.data[check_rank(self.resolution)]["time"].append(datetime.fromtimestamp(d["time"]/1000))
+        self.data[check_rank(self.resolution)]["open"].append(float(d["open"]))
+        self.data[check_rank(self.resolution)]["close"].append(float(d["close"]))
+        self.data[check_rank(self.resolution)]["low"].append(float(d["low"]))
+        self.data[check_rank(self.resolution)]["high"].append(float(d["high"]))
         self.update_swing_low(float(d["low"]))
 
     def undo_all_data(self):
@@ -272,7 +284,7 @@ class Bot:
         *** Assumes that self.ema_fast and self.ema_slow are already updated.
         :return: the latest MACD value.
         """
-        return self.ema_fast[-1] - self.ema_slow[-1]
+        return self.ema_fast[check_rank(self.resolution)][-1] - self.ema_slow[check_rank(self.resolution)][-1]
 
     def calculate_latest_macd_signal(self, signal=9):
         """
@@ -282,7 +294,7 @@ class Bot:
             of the latest MACD value.
         :return: the latest MACD signal value.
         """
-        return self.calculate_latest_ema(self.macd[-1], self.macdsignal[-1], signal)
+        return self.calculate_latest_ema(self.macd[check_rank(self.resolution)][-1], self.macdsignal[check_rank(self.resolution)][-1], signal)
 
     def update_swing_low(self, value):
         """
@@ -297,7 +309,7 @@ class Bot:
         Calculates the change in terms of financial figures.
         :return: gradients for MACD and MACD signal respectively.
         """
-        return self.macd[-1] - self.macd[-2], self.macdsignal[-1] - self.macdsignal[-2]
+        return self.macd[check_rank(self.resolution)][-1] - self.macd[check_rank(self.resolution)][-2], self.macdsignal[check_rank(self.resolution)][-1] - self.macdsignal[check_rank(self.resolution)][-2]
 
     def macd_cross(self):
         """
@@ -312,30 +324,42 @@ class Bot:
 
         #print("Current MACD: ", self.macd[-1])
         #print("Current signal: ", self.macdsignal[-1])
-        return self.macd[-2] < self.macdsignal[-2] and self.macd[-1] > self.macdsignal[-1]
+        return self.macd[check_rank(self.resolution)][-2] < self.macdsignal[check_rank(self.resolution)][-2] and self.macd[check_rank(self.resolution)][-1] > self.macdsignal[check_rank(self.resolution)][-1]
 
-    def plot(self, last=None):
+    def check_macro_buy_signal(self):
+        """
+        Checks to see if the market's bullish by making sure that the long EMA is at least equal to the low (or below)
+        and that MACD has crossed signal.
+        :return: a boolean
+        """
+        return self.ema_hundred[check_rank(self.resolution)][-1] <= self.data[check_rank(self.resolution)]["low"][-1] and self.cross
+
+    def plot(self, resolution=None, last=None):
         """
         Plots the data that is currently stored inside Bot.
         """
         if last is None:
             last = 0
-        code = self.data["assetCode"]
-        time = list(self.data["time"])
-        open_ = list(self.data["open"])
-        high = list(self.data["high"])
-        low = list(self.data["low"])
-        close = list(self.data["close"])
+        if resolution is None:
+            idx = check_rank(self.resolution)
+        else:
+            idx = check_rank(resolution)
+        code = self.data[idx]["assetCode"]
+        time = list(self.data[idx]["time"])[last*-1:]
+        open_ = list(self.data[idx]["open"])[last*-1:]
+        high = list(self.data[idx]["high"])[last*-1:]
+        low = list(self.data[idx]["low"])[last*-1:]
+        close = list(self.data[idx]["close"])[last*-1:]
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True)
         candle = go.Candlestick(x=time,open=open_,high=high,low=low,close=close, name="Candle")
 
-        ema_g = go.Scatter(x=time, y=list(self.ema_hundred), marker={'color':"orange"}, name="Long EMA")
+        ema_g = go.Scatter(x=time, y=list(self.ema_hundred[idx])[last*-1:], marker={'color':"orange"}, name="Long EMA")
 
         fig.add_trace(candle, row=1, col=1)
         fig.add_trace(ema_g, row=1, col=1)
 
-        macdeez = go.Scatter(x=time, y=list(self.macd), marker={'color':'blue'}, name="MACD")
-        macdeezsignal = go.Scatter(x=time, y=list(self.macdsignal), marker={"color":"red"}, name="Signal")
+        macdeez = go.Scatter(x=time, y=list(self.macd[idx])[last*-1:], marker={'color':'blue'}, name="MACD")
+        macdeezsignal = go.Scatter(x=time, y=list(self.macdsignal[idx])[last*-1:], marker={"color":"red"}, name="Signal")
 
         fig.add_trace(macdeez, row=2, col=1)
         fig.add_trace(macdeezsignal, row=2, col=1)
@@ -364,26 +388,26 @@ def update_graph(n):
     #print("Graph time: ", datetime.now())
     bot.safe_update_all()
     #bot.update_all()
-    code = bot.data["assetCode"]
+    code = bot.data[check_rank(bot.resolution)]["assetCode"]
     #print("Execution time: ", datetime.now())
     #print("Last time: ", bot.data["time"][-1])
-    time = list(bot.data["time"])[-60:]
-    open_ = list(bot.data["open"])[-60:]
-    high = list(bot.data["high"])[-60:]
-    low = list(bot.data["low"])[-60:]
-    close = list(bot.data["close"])[-60:]
+    time = list(bot.data[check_rank(bot.resolution)]["time"])[-60:]
+    open_ = list(bot.data[check_rank(bot.resolution)]["open"])[-60:]
+    high = list(bot.data[check_rank(bot.resolution)]["high"])[-60:]
+    low = list(bot.data[check_rank(bot.resolution)]["low"])[-60:]
+    close = list(bot.data[check_rank(bot.resolution)]["close"])[-60:]
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing= 0.2)
 
     candle = go.Candlestick(x=time,open=open_,high=high,low=low,close=close, name="Candle")
     fig.add_trace(candle, row=1, col=1)
-    ema_g = go.Scatter(x=time, y=list(bot.ema_hundred)[-60:], marker={'color':"orange"}, name="Long EMA")
+    ema_g = go.Scatter(x=time, y=list(bot.ema_hundred[check_rank(bot.resolution)])[-60:], marker={'color':"orange"}, name="Long EMA")
 
     fig.add_trace(ema_g, row=1, col=1)
     #fig.add_trace(candle, row=1, col=1)
     #fig.add_trace(ema_g, row=1, col=1)
 
-    macdeez = go.Scatter(x=time, y=list(bot.macd)[-60:], marker={'color':'blue'}, name="MACD")
-    macdeezsignal = go.Scatter(x=time, y=list(bot.macdsignal)[-60:], marker={"color":"red"}, name="Signal")
+    macdeez = go.Scatter(x=time, y=list(bot.macd[check_rank(bot.resolution)])[-60:], marker={'color':'blue'}, name="MACD")
+    macdeezsignal = go.Scatter(x=time, y=list(bot.macdsignal[check_rank(bot.resolution)])[-60:], marker={"color":"red"}, name="Signal")
 
     fig.add_trace(macdeez, row=2, col=1)
     fig.add_trace(macdeezsignal, row=2, col=1)

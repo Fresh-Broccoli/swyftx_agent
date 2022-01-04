@@ -62,6 +62,6 @@ class NearestTimer(RepeatedTimer):
 
 if '__main__' == __name__:
     def print_now():
-        print("The current time is: ", datetime.now())
+        now = datetime.now()
 
-    timer = NearestTimer("1m", print_now, delay=0)
+    timer = NearestTimer("5m", print_now, delay=0)

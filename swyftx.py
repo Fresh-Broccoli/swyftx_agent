@@ -464,20 +464,25 @@ class SwagX:
                 "high"
             }
         """
+
         #print(f"primary: {primary}, secondary: {secondary}, side: {side}, resolution: {resolution}")
-        print("get_last_completed_data execution time: ", datetime.now())
+        #print("get_last_completed_data execution time: ", datetime.now())
         end = (erase_seconds(time()) + 0) * 1000
         start = end - resolution_to_seconds[resolution]*1000
-        print("Start time: ", datetime.fromtimestamp(start/1000))
-        print("End time: ", datetime.fromtimestamp(end/1000))
+        #print("Start time: ", datetime.fromtimestamp(start/1000))
+        #print("End time: ", datetime.fromtimestamp(end/1000))
         #print("Execution Time: ", datetime.now())
 
         #print(self.session.get(endpoints[
         #                           "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, f"timeStart={int(start)}",f"timeEnd={int(end)}"])])).text)
-        print("Fetch Time: ", datetime.now())
+        #print("Fetch Time: ", datetime.now())
 
-        d = json.loads(self.session.get(endpoints[
-                                            "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, f"timeStart={int(start)}",f"timeEnd={int(end)}"])])).text)["candles"]
+        d = []
+
+        while len(d) < 1: # Band-aid fix for now.
+            d = json.loads(self.session.get(endpoints[
+                                                "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, f"timeStart={int(start)}",f"timeEnd={int(end)}"])])).text)["candles"]
+            #print(d)
 
         return d[0]
 
@@ -485,6 +490,7 @@ class SwagX:
     def get_latest_asset_data(self, primary, secondary, side, resolution, delay=0.3, stream=False):
         """
         Gets the most recent price data for secondary asset in terms of its value in the primary asset.
+        To get the most recent bar, it has to be called EXACTLY at the point at which the price closes.
         :param primary: The asset that we'll use to evaluate the value of the secondary asset.
         :param secondary: The asset that we're interested in.
         :param side: Determines whether we're looking for the 'ask' or 'bid' price.
