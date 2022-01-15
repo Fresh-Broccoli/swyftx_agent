@@ -24,7 +24,7 @@ class OldTokenError(Exception):
 class EmptyTokenError(Exception):
     pass
 
-class SwagX:
+class SwyftX:
     def __init__(self, apiKey, mode="demo", blacklist = ["USDT", "USDC", "BUSD"]):
         """
         Initialisation for SwyftX agent. Its main purpose is to interact with the SwyftX server such as fetching data
@@ -49,7 +49,7 @@ class SwagX:
         self.asset_info = self._fetch_asset_info()
         self._blacklist = blacklist
         self._to_id, self._to_code = self._create_name_id_dict(self.asset_info)
-
+        self.asset_info = self._reshape_asset_info()
         self.collected_data = {}
         self.threaded_timer = None
 
@@ -156,7 +156,9 @@ class SwagX:
         id_to_code = {}
 
         code_to_id["AUD"] = "1"
+        code_to_id["USD"] = "36"
         id_to_code["36"] = "USD"
+        id_to_code["1"] = "AUD"
 
         for asset in assets:
             code_to_id[asset["code"]] = str(asset["id"])
@@ -180,10 +182,10 @@ class SwagX:
         """
         return self._to_id[name]
 
-    def fetch_balance(self, prettify=True):
+    def fetch_balance(self):
         """
         Fetches data about our wallet.
-        :param prettify: a boolean that determines whether to convert id to ticker symbols such that it's more readable.
+        :param prettify: a booylean that determines whether to convert id to ticker symbols such that it's more readable.
         :return: a list of dictionaries in the structure of:
 
             if prettify = True:
@@ -201,11 +203,11 @@ class SwagX:
         """
         self.session.headers.update(self.authenticate_header)
         balance = json.loads(self.session.get(self.endpoint + "user/balance/").text)
-        if prettify:
-            for i in range(len(balance)):
-                balance[i]["code"] = self.to_code(str(balance[i]["assetId"]))
+        out = {}
+        for c in balance:
+            out[self.to_code(str(c["assetId"]))] = float(c["availableBalance"])
 
-        return balance
+        return out
 
     def get_top_n_assets(self, n=20):
         """
@@ -246,7 +248,7 @@ class SwagX:
         
         **Examples**
         -------------------------------------------------------------------------------------
-        SwagX.market_buy(primary="USD", secondary="BTC", quantity="1000", assetQuantity="USD")
+        SwyftX.market_buy(primary="USD", secondary="BTC", quantity="1000", assetQuantity="USD")
         -------------------------------------------------------------------------------------
         The line above is telling the SwyftX API to buy $1000 USD worth of BTC at the current market price
 
@@ -259,7 +261,7 @@ class SwagX:
         payload = {
             "primary": primary,
             "secondary": secondary,
-            "quantity": quantity,
+            "quantity": str(quantity),
             "assetQuantity": assetQuantity,
             "orderType": 1
         }
@@ -278,12 +280,12 @@ class SwagX:
 
         **Examples**
         ---------------------------------------------------------------------------------------
-        SwagX.market_sell(primary="USD", secondary="BTC", quantity="1000", assetQuantity="USD")
+        SwyftX.market_sell(primary="USD", secondary="BTC", quantity="1000", assetQuantity="USD")
         ---------------------------------------------------------------------------------------
         The line above is telling the SwyftX API to sell $1000 USD worth of BTC at the current market price
 
         ---------------------------------------------------------------------------------------------
-        SwagX.market_sell(primary="USD", secondary="BTC", quantity="0.00173294", assetQuantity="BTC")
+        SwyftX.market_sell(primary="USD", secondary="BTC", quantity="0.00173294", assetQuantity="BTC")
         ---------------------------------------------------------------------------------------------
         The line above is telling the SwyftX API to sell 0.00173294 BTCs at the current market price for a suitable amount of USD
         
@@ -295,7 +297,7 @@ class SwagX:
         payload = {
             "primary": primary,
             "secondary": secondary,
-            "quantity": quantity,
+            "quantity": str(quantity),
             "assetQuantity": assetQuantity,
             "orderType": 2
         }
@@ -311,6 +313,13 @@ class SwagX:
         :quantity (string): The amount of 'assetQuantity' that will be spent for this trade.
         :trigger (string): The price that secondary asset needs to reach in order to execute a sell order.
         :assetQuantity (string): The amount in terms of whichever currency/asset we specify for this trade to be worth.
+
+        **Examples**
+        ---------------------------------------------------------------------------------------
+        SwyftX.stop_loss(primary="AUD", secondary="BTC", quantity="1000", trigger="60000" assetQuantity="AUD")
+        ---------------------------------------------------------------------------------------
+        The line above is telling the SwyftX API to place a stop loss sell order that will sell $1000 AUD worth of BTC
+        when the price falls to $60000 AUD.
         """
         if assetQuantity is None:
             assetQuantity = primary
@@ -318,13 +327,44 @@ class SwagX:
         payload = {
             "primary": primary,
             "secondary": secondary,
-            "quantity": quantity,
+            "quantity": str(quantity),
             "assetQuantity": assetQuantity,
             "orderType": 6,
             "trigger": 1/float(trigger)
         }
         self.session.headers.update(self.authenticate_header)
         response = self.session.post(self.endpoint + "orders/", data=json.dumps(payload))
+        return response
+
+    def get_order(self, orderUuid):
+        """
+        Grabs a specific order by its ID.
+        :param orderUuid: a string that indicates the order ID of a particular order that we're interested in deleting.
+        :return: a dictionary with the following structure if successful:
+            {
+              "orderUuid": "ord_123abc...",
+              "order_type": "3",
+              "primary_asset": "1",
+              "secondary_asset": "3",
+              "quantity_asset": "1",
+              "quantity": 100,
+              "trigger": 8500,
+              "status": "1",
+              "created_time": 1596684928098,
+              "updated_time": 1596684928098,
+              "amount": 100,
+              "total": 0.01,
+              "rate": 0.01,
+              "audValue": 8501.025,
+              "userCountryValue": 8501.025,
+              "feeAmount": 12.25,
+              "feeAsset": "36",
+              "feeAudValue": 40.25,
+              "feeUserCountryValue": 40.25
+            }
+        """
+        self.session.headers.update(self.authenticate_header)
+        response = self.session.get(self.endpoint + "orders/byId/" + orderUuid)
         return response
 
     def delete_order(self, orderUuid):
@@ -359,7 +399,7 @@ class SwagX:
         """
         return self.delete_order(self.list_recent_order(assetCode)[-1]["orderUuid"])
 
-    def list_recent_order(self, assetCode, limit="", page=""):
+    def recent_order(self, assetCode, limit="", page=""):
         """
         Returns a list of dictionaries about recent orders.
         :param assetCode: a string that indicates the
@@ -610,4 +650,4 @@ class SwagX:
 if '__main__' == __name__:
     with open("key.txt", "r") as f:
         key = f.readline()
-    swag = SwagX(key)
+    swyftx = SwyftX(key)
