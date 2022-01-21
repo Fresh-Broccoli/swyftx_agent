@@ -4,6 +4,8 @@ import plotly.graph_objects as go
 import dash_core_components as dcc
 import dash_html_components as html
 import webbrowser
+import pandas as pd
+import os
 
 from collections import deque
 from plotly.subplots import make_subplots
@@ -39,6 +41,7 @@ class Bot:
                 no_of_resolutions)], [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)]
         self.primary, self.secondary, self.balance, self.resolution, self.swing_low, self.last_macd, self.last_signal, self.cross, self.macd_gradient, self.signal_gradient, self.buy_signal, self.bull, self.app, self.buy_rate, self.buy_price, self.stop_loss_id = None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         self.fast, self.slow, self.signal, self.long = None, None, None, None
+        self.history = []
         self.zoomed, self.bought = False, False
         self.tolerance, self.temp_tolerance = 0, 0
         print("-" * 110)
@@ -67,6 +70,10 @@ class Bot:
         :param graph: a boolean that determines whether we'll be graphing our collected data or not. It's
             recommended that we set this to False because it can slow everything down.
         """
+
+        # Create directories for buying/selling history/log:
+        os.makedirs(os.path.join("history", secondary), exist_ok=True)
+
         self.collect_and_process_live_data(primary, secondary, resolution, fast, slow, signal, long,
                                            start_time=start_time, end_time=end_time, whole_resolution=whole_resolution)
         self.fast, self.slow, self.signal, self.long = fast, slow, signal, long
@@ -183,6 +190,7 @@ class Bot:
         Stops livestream.
         """
         self.swyftx.stop_stream()
+        self.history_to_csv()
         print("Clock stopped.")
 
     def update_all(self, fast=12, slow=26, signal=9, long=100):
@@ -211,6 +219,8 @@ class Bot:
                 if self.zoomed:
                     # if zoomed, it's time to buy
                     amount = self.primary_balance() * self.buy_rate
+                    r = self.market_buy(amount, stop_loss=True)
+                    """
                     r = self.swyftx.market_buy(self.primary, self.secondary, amount,
                                                self.primary)
                     if r.ok:  # Check to see if response is successful
@@ -224,6 +234,8 @@ class Bot:
                             #self.balance[self.primary] -= r["userCountryValue"]
                             #self.balance[self.secondary] += r["amount"]
                             self.stop_loss_id = self.swyftx.stop_loss(self.primary, self.secondary, amount, self.swing_low).json()["orderUuid"]
+                    """
+
                 else:
                     # otherwise, we zoom in.
                     self.stop_clock()
@@ -236,6 +248,8 @@ class Bot:
             if self.macd_gradient <= 0: # MACD is decreasing/stagnant
                 self.temp_tolerance -= 1
                 if self.temp_tolerance < 0:
+                    r = self.market_sell(self.balance[self.secondary], self.secondary)
+                    """
                     r = self.swyftx.market_sell(self.primary, self.secondary, self.balance[self.secondary], self.secondary)
                     if r.ok: # If sell request is successful:
                         r = r.json()["order"]
@@ -252,7 +266,7 @@ class Bot:
                             self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
                                                                resolution=rank_up(self.resolution))
                             self.run_clock(resolution=self.resolution)
-
+                    """
 
 
         """
@@ -426,8 +440,64 @@ class Bot:
         return self.ema_hundred[check_rank(self.resolution)][-1] <= self.data[check_rank(self.resolution)]["low"][
             -1] and self.cross
 
+    def order_to_list(self, d):
+        """
+        Takes the json of a buy/sell order and converts it to a list.
+        :param d: a dictionary containing information about an order.
+        :return: a list
+        """
+        return [d["orderUuid"]] + list(d["order"].values()) + [d["processed"]]
+
+
+    def market_buy(self, amount, assetQuantity=None, stop_loss = False):
+        if assetQuantity is None:
+            assetQuantity = self.primary
+        r = self.swyftx.market_buy(self.primary, self.secondary, amount,
+                                   assetQuantity).json()
+        if r["order"]["status"] == 4:  # If purchase is successful, set self.bought to true, and create
+            # stop loss
+            self.bought = True
+            self.buy_price = r["order"]["rate"]
+            self.balance = self.swyftx.fetch_balance()
+
+            if stop_loss:
+                self.stop_loss_id = self.swyftx.stop_loss(self.primary, self.secondary, amount,
+                                                          self.swing_low).json()["orderUuid"]
+
+            self.history.append(self.order_to_list(r))
+        return r
+
+    def market_sell(self, amount, assetQuantity=None):
+        if assetQuantity is None:
+            assetQuantity = self.primary
+        r = self.swyftx.market_sell(self.primary, self.secondary, amount,
+                                    assetQuantity).json()
+        if r["order"]["status"] == 4: # If market sell is successful.
+            self.balance = self.swyftx.fetch_balance()
+            # Figure out a way to find out how much was actually made during a sell transaction.
+            # Apparently, we don't get charged any fees in the demo mode.
+            #self.balance[self.primary] += (r["userCountryValue"] - r["amount"]*r["rate"])
+            #self.balance[self.secondary] -= r["amount"]
+            self.swyftx.delete_order(self.stop_loss_id)
+            self.bought = False
+            self.zoomed = False
+            self.history.append(self.order_to_list(r))
+
+            # Used for timer related stuff:
+
+            self.stop_clock()
+            self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
+                                               resolution=rank_up(self.resolution))
+            self.run_clock(resolution=self.resolution)
+
+
     def primary_balance(self):
         return float(self.balance[self.primary])
+
+    def history_to_csv(self):
+        d = pd.DataFrame(self.history, columns=["orderUuid", "order_type", "primary_asset", "secondary_asset", "quantity_asset", "quantity", "trigger", "status", "created_time", "updated_time", "amount", "total", "rate", "aud_value", "swyftxValue", "userCountryValue", "processed"])
+        path = os.path.join("history", self.secondary)
+        d.to_csv(os.path.join(path, str(1+len(os.listdir(path)))))
 
     def plot(self, resolution=None, last=None):
         """
