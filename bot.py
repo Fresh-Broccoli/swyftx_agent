@@ -17,6 +17,7 @@ from dash.dependencies import Output, Input
 from nearest import erase_seconds, next_interval, resolution_to_seconds, check_rank, rank_up, rank_down, \
     no_of_resolutions
 from threading import Timer
+from errors import *
 
 port = 5000
 app = dash.Dash(__name__)
@@ -41,6 +42,7 @@ class Bot:
                 no_of_resolutions)], [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)]
         self.primary, self.secondary, self.balance, self.resolution, self.swing_low, self.last_macd, self.last_signal, self.cross, self.macd_gradient, self.signal_gradient, self.buy_signal, self.bull, self.app, self.buy_rate, self.buy_price, self.stop_loss_id = None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         self.fast, self.slow, self.signal, self.long = None, None, None, None
+        self.start_time, self.backtest = None, None
         self.history = []
         self.zoomed, self.bought = False, False
         self.tolerance, self.temp_tolerance = 0, 0
@@ -49,7 +51,7 @@ class Bot:
         print("-" * 110)
 
     def quick_start(self, primary, secondary, resolution="1m", fast=12, slow=26, signal=9, long=100,
-                    whole_resolution=True, start_time=None, end_time=None, buy_rate=0.2, graph=False):
+                    whole_resolution=True, start_time=None, end_time=None, buy_rate=0.2, graph=False, backtest=False):
         """
         Allows you to start trading quickly by initialising other parts of Bot for it to function properly.
         This function is usually called immediately after the initialisation of Bot.
@@ -69,6 +71,10 @@ class Bot:
             historical data relating to the secondary asset.
         :param graph: a boolean that determines whether we'll be graphing our collected data or not. It's
             recommended that we set this to False because it can slow everything down.
+        :param backtest: a boolean that determines whether to backtest the current strategy. If so, start_time
+            will have to be manually specified. end_time can be left as None because it will be assumed to be the most
+            recent timeslot at the time of execution.
+
         """
 
         # Create directories for buying/selling history/log:
@@ -78,6 +84,7 @@ class Bot:
                                            start_time=start_time, end_time=end_time, whole_resolution=whole_resolution)
         self.fast, self.slow, self.signal, self.long = fast, slow, signal, long
         self.buy_rate = buy_rate
+        self.backtest = backtest
 
         if graph:
             # now = time()
@@ -108,10 +115,14 @@ class Bot:
         #   Save the time after the previous execution
         #   Call calculate_next_..., calculate the time it takes
         else:
-            self.run_clock(resolution=self.resolution)
+            if not backtest:
+                self.run_clock(resolution=self.resolution)
+            else:
+                pass
 
     def collect_and_process_live_data(self, primary, secondary, resolution="1m", fast=12, slow=26, signal=9, long=100,
-                                      swing_period=60, tolerance=2, whole_resolution=True, start_time=None, end_time=None):
+                                      swing_period=60, tolerance=2, whole_resolution=True, start_time=None, end_time=None,
+                                      ):
         """
         Gathers and calculates initial data and financial figures. This function needs to be called for the bot to work.
         :param primary: a string that represents the ticker symbol of the asset that we'll use to evaluate the value of
@@ -145,6 +156,9 @@ class Bot:
             # print("After: ", datetime.fromtimestamp(now))
 
         if start_time is None:
+            # Check if we're backtesting:
+            if self.backtest:
+                raise NoStartTimeError()
             # If there's no specified start time, it will be set 24 hours before the time this line is executed.
             start_time = now - 24 * 60 * 60
         elif type(start_time) is datetime:
@@ -214,6 +228,9 @@ class Bot:
 
 
         # Strategy:
+        self.macd_gradient_strategy()
+
+    def macd_gradient_strategy(self):
         if not self.bought:
             if self.check_macro_buy_signal():
                 if self.zoomed:
@@ -466,6 +483,25 @@ class Bot:
 
             self.history.append(self.order_to_list(r))
         return r
+
+    def backtest_buy(self, mode="open", open, close, low, high):
+        """
+        Buy function used in backtesting. It's the same as market_buy, except it doesn't actually make a real purchase.
+        :param mode: a string that determines the value at which to buy. There are currently n modes:
+            'open': buy price is always the open value.
+            'random': buy price is a random value between low and high.
+            'nopen': buy price is near open
+        :param open: a float that represents the price at open.
+        :param close: a float that represents the price at close.
+        :param low: a float that represents the lowest price within a timeframe.
+        :param high: a float that represents the highest price within a timeframe.
+        :return:
+        """
+        if mode == "open":
+
+        elif mode == "random":
+
+        elif mode == "nopen":
 
     def market_sell(self, amount, assetQuantity=None):
         if assetQuantity is None:
