@@ -10,12 +10,14 @@ import os
 from collections import deque
 from plotly.subplots import make_subplots
 from swyftx import SwyftX
+from tools import Id_Generator
 from datetime import datetime
 from talib import EMA
 from time import time, sleep
+from random import uniform
 from dash.dependencies import Output, Input
 from nearest import erase_seconds, next_interval, resolution_to_seconds, check_rank, rank_up, rank_down, \
-    no_of_resolutions
+    no_of_resolutions, calculate_next_interval
 from threading import Timer
 from errors import *
 
@@ -42,16 +44,16 @@ class Bot:
                 no_of_resolutions)], [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)]
         self.primary, self.secondary, self.balance, self.resolution, self.swing_low, self.last_macd, self.last_signal, self.cross, self.macd_gradient, self.signal_gradient, self.buy_signal, self.bull, self.app, self.buy_rate, self.buy_price, self.stop_loss_id = None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         self.fast, self.slow, self.signal, self.long = None, None, None, None
-        self.start_time, self.backtest = None, None
+        self.start_time, self.backtest, self.id_gen, self.backtest_stop_loss_order, self.backtest_ctime = None, None, None, None, None
         self.history = []
-        self.zoomed, self.bought = False, False
+        self.zoomed, self.bought, self.running = False, False, False
         self.tolerance, self.temp_tolerance = 0, 0
         print("-" * 110)
         print("Bot created. Please call 'collect_and_process_live_data' to start trading a particular cryptocurrency.")
         print("-" * 110)
 
-    def quick_start(self, primary, secondary, resolution="1m", fast=12, slow=26, signal=9, long=100,
-                    whole_resolution=True, start_time=None, end_time=None, buy_rate=0.2, graph=False, backtest=False):
+    def quick_start(self, primary, secondary, resolution="5m", fast=12, slow=26, signal=9, long=100,
+                    whole_resolution=True, start_time=None, end_time=None, buy_rate=0.2, graph=False, backtest=False, backtest_end_time = datetime.now()):
         """
         Allows you to start trading quickly by initialising other parts of Bot for it to function properly.
         This function is usually called immediately after the initialisation of Bot.
@@ -116,9 +118,18 @@ class Bot:
         #   Call calculate_next_..., calculate the time it takes
         else:
             if not backtest:
+                # When we're not backtesting, update_all will periodically run, which allows the application to update
+                # the data while executing trading strategies.
                 self.run_clock(resolution=self.resolution)
             else:
-                pass
+                # For backtesting,
+                self.id_gen = Id_Generator()
+                i = 0
+                while self.data[check_rank(self.resolution)]["time"][-1] < backtest_end_time:
+                    #timeslot =
+                    i += 1
+                    print(i)
+                    self.update_all(fast, slow, signal, long)
 
     def collect_and_process_live_data(self, primary, secondary, resolution="1m", fast=12, slow=26, signal=9, long=100,
                                       swing_period=60, tolerance=2, whole_resolution=True, start_time=None, end_time=None,
@@ -157,8 +168,8 @@ class Bot:
 
         if start_time is None:
             # Check if we're backtesting:
-            if self.backtest:
-                raise NoStartTimeError()
+            #if self.backtest:
+            #    raise NoStartTimeError()
             # If there's no specified start time, it will be set 24 hours before the time this line is executed.
             start_time = now - 24 * 60 * 60
         elif type(start_time) is datetime:
@@ -174,17 +185,24 @@ class Bot:
         data = self.swyftx.extract_price_data(
             self.swyftx.get_asset_data(primary, secondary, "ask", resolution, start_time * 1000, now * 1000, True))
         # data_bid = self.extract_price_data(self.get_asset_data(primary, secondary, "bid", "1m", start_time, now, True))
+        #print("data:",data)
         max_length = len(data["close"])
         ema_fast = EMA(np.array(data["close"]), fast)
         ema_slow = EMA(np.array(data["close"]), slow)
         macd = ema_fast - ema_slow
+        #print("macd:",macd)
+        #print("signal:",signal)
         self.macdsignal[check_rank(self.resolution)] = deque(EMA(macd, signal)[len(data["time"]) * (-1):])
         self.ema_fast[check_rank(self.resolution)] = deque(ema_fast, max_length)
         self.ema_slow[check_rank(self.resolution)] = deque(ema_slow, max_length)
         self.macd[check_rank(self.resolution)] = deque(macd, max_length)
         self.ema_hundred[check_rank(self.resolution)] = deque(EMA(np.array(data["close"]), long), max_length)
-        self.swing_low = min(
-            list(data["low"])[swing_period * (-1):])  # Could be subjected to change. Also considering 'close'.
+        t = data["time"][data["low"].index(min(list(data["low"])[swing_period * (-1):]))]
+        #print("Swing Low time: ", t)
+        self.swing_low = self.swyftx.get_asset_timeslot(self.primary,self.secondary, "bid", self.resolution,t)["low"]
+
+            #min(
+            #list(data["low"])[swing_period * (-1):])  # Could be subjected to change. Also considering 'close'.
         self.data[check_rank(self.resolution)] = data
 
     def step(self):
@@ -196,16 +214,25 @@ class Bot:
         While this is running, it's possible to execute other functions.
         :param kwargs: parameter values for self.update_all()
         """
-        print("Starting clock...")
-        self.swyftx.livestream(function=self.update_all, **kwargs)
+        if self.backtest:
+            pass
+        else:
+            print("Starting clock...")
+            self.running = True
+            self.swyftx.livestream(function=self.update_all, **kwargs)
 
     def stop_clock(self):
         """
         Stops livestream.
         """
-        self.swyftx.stop_stream()
-        self.history_to_csv()
-        print("Clock stopped.")
+        if self.backtest:
+            pass
+        else:
+            self.swyftx.stop_stream()
+            self.running = False
+            print("Clock stopped.")
+        if len(self.history) > 0:
+            self.history_to_csv()
 
     def update_all(self, fast=12, slow=26, signal=9, long=100):
         """
@@ -219,7 +246,9 @@ class Bot:
         print(f"Last close: {self.data[check_rank(self.resolution)]['close'][-1]}")
         print(f"Last time: {self.data[check_rank(self.resolution)]['time'][-1]}")
         # self.update_data(self.swyftx.get_latest_asset_data(self.primary, self.secondary, "ask", self.resolution))
-        self.update_data(self.swyftx.get_last_completed_data(self.primary, self.secondary, "ask", self.resolution))
+        new_data = self.swyftx.get_last_completed_data(self.primary, self.secondary, "ask", self.resolution) if not self.backtest else self.swyftx.get_asset_timeslot(self.primary, self.secondary, "ask", self.resolution, datetime.fromtimestamp(calculate_next_interval(self.data[check_rank(self.resolution)]["time"][-1].timestamp(), interval=self.resolution)))
+        #return new_data
+        self.update_data(new_data)
         print(f"Updated close: {self.data[check_rank(self.resolution)]['close'][-1]}")
         print(f"Update time: {self.data[check_rank(self.resolution)]['time'][-1]}")
         print('-' * 110)
@@ -229,6 +258,7 @@ class Bot:
 
         # Strategy:
         self.macd_gradient_strategy()
+        print("History:",self.history)
 
     def macd_gradient_strategy(self):
         if not self.bought:
@@ -236,7 +266,9 @@ class Bot:
                 if self.zoomed:
                     # if zoomed, it's time to buy
                     amount = self.primary_balance() * self.buy_rate
-                    r = self.market_buy(amount, stop_loss=True)
+                    r = self.market_buy(amount, stop_loss=True) # might need to use a while loop to ensure that a buy
+                    # order is always successful.
+
                     """
                     r = self.swyftx.market_buy(self.primary, self.secondary, amount,
                                                self.primary)
@@ -353,12 +385,14 @@ class Bot:
         the function.
         :param d: data dictionary returned by self.swyftx.get_latest_asset_data()
         """
-        self.data[check_rank(self.resolution)]["time"].append(datetime.fromtimestamp(d["time"] / 1000))
+        t = datetime.fromtimestamp(d["time"] / 1000)
+        self.data[check_rank(self.resolution)]["time"].append(t)
         self.data[check_rank(self.resolution)]["open"].append(float(d["open"]))
         self.data[check_rank(self.resolution)]["close"].append(float(d["close"]))
         self.data[check_rank(self.resolution)]["low"].append(float(d["low"]))
         self.data[check_rank(self.resolution)]["high"].append(float(d["high"]))
-        self.update_swing_low(float(d["low"]))
+        p = self.swyftx.get_asset_timeslot(self.primary, self.secondary, side="bid", resolution=self.resolution, t=t)
+        self.update_swing_low(p["low"])
 
     def undo_all_data(self):
         self.data["time"].pop()
@@ -415,14 +449,38 @@ class Bot:
             # to look at the overall trend once again.
             # Since the stop loss order has been filled, self.bought will become False because we're now looking for a
             # new opportunity to re-enter the market.
-            self.zoomed = False
-            self.bought = False
+            if self.stop_loss_id: # This check is necessary because it's possible that a swing-low was reached, but a
+                # stop sell was never placed.
+                r = self.swyftx.get_order(self.stop_loss_id)
+                if r.ok:
+                    if r.json()["status"] == 4: # This means that the order is filled.
+                        self.zoomed = False
+                        self.bought = False
+                        self.record_stop_loss()
+                        # Record stop loss transaction to history.
+                        self.stop_clock()
+                        self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
+                                                           resolution=rank_up(self.resolution))
+                        self.run_clock(resolution=self.resolution)
+
             self.swing_low = value
 
-            self.stop_clock()
-            self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
-                                               resolution=rank_up(self.resolution))
-            self.run_clock(resolution=self.resolution)
+
+
+    def record_stop_loss(self):
+        """
+        Records stop loss details to self.history.
+        Responsible for:
+            - checking if we're in backtesting mode
+            - checking if the order is valid or not
+        """
+        if self.backtest:
+            order = self.backtest_stop_loss_order
+        else:
+            order = self.order_to_list(self.swyftx.get_order(self.stop_loss_id).json())
+        print("Stop loss order:",order)
+        self.history.append(order)
+
 
     def calculate_latest_gradients(self):
         """
@@ -463,77 +521,187 @@ class Bot:
         :param d: a dictionary containing information about an order.
         :return: a list
         """
-        return [d["orderUuid"]] + list(d["order"].values()) + [d["processed"]]
+        desirable = ["order_type","primary_asset","secondary_asset","quantity_asset","quantity","trigger","status","created_time","updated_time","amount","total","rate","userCountryValue"]
+        if len(d) == 3:
+            return [d["orderUuid"]] + [d["order"][i] for i in desirable]
+        else:
+            desirable = ["orderUuid"] + desirable
+            return [d[i] for i in desirable]
 
-
-    def market_buy(self, amount, assetQuantity=None, stop_loss = False):
+    def market_buy(self, amount, assetQuantity=None, stop_loss = False, backtest_mode="open"):
         if assetQuantity is None:
             assetQuantity = self.primary
-        r = self.swyftx.market_buy(self.primary, self.secondary, amount,
+
+        if self.backtest:
+            r = self.backtest_buy(amount, assetQuantity)
+        else:
+            r = self.swyftx.market_buy(self.primary, self.secondary, amount,
                                    assetQuantity).json()
+
         if r["order"]["status"] == 4:  # If purchase is successful, set self.bought to true, and create
             # stop loss
             self.bought = True
             self.buy_price = r["order"]["rate"]
-            self.balance = self.swyftx.fetch_balance()
+            self.update_balance(r)
 
             if stop_loss:
-                self.stop_loss_id = self.swyftx.stop_loss(self.primary, self.secondary, amount,
-                                                          self.swing_low).json()["orderUuid"]
-
-            self.history.append(self.order_to_list(r))
+                self.set_stop_loss(amount, assetQuantity)
+            order = self.order_to_list(r)
+            print("Buy order:",order)
+            self.history.append(order)
         return r
 
-    def backtest_buy(self, mode="open", open, close, low, high):
+    def backtest_buy(self, amount, assetQuantity, mode="close"):
         """
         Buy function used in backtesting. It's the same as market_buy, except it doesn't actually make a real purchase.
         :param mode: a string that determines the value at which to buy. There are currently n modes:
             'open': buy price is always the open value.
             'random': buy price is a random value between low and high.
-            'nopen': buy price is near open
+            'mid': buy price is between open and close
         :param open: a float that represents the price at open.
         :param close: a float that represents the price at close.
         :param low: a float that represents the lowest price within a timeframe.
         :param high: a float that represents the highest price within a timeframe.
-        :return:
+        :return: a dictionary that simulates the output of a market_buy
         """
-        if mode == "open":
-
+        order = self.generate_dummy_order(amount, "BUY")
+        if mode == "close":
+            rate = self.data[check_rank(self.resolution)]["close"][-1]
+        elif mode == "open":
+            rate = self.data[check_rank(self.resolution)]["open"][-1]
         elif mode == "random":
+            rate = uniform(self.data[check_rank(self.resolution)]["low"][-1], self.data[check_rank(self.resolution)]["high"][-1])
+        elif mode == "mid":
+            rate = (self.data[check_rank(self.resolution)]["open"][-1]+self.data[check_rank(self.resolution)]["close"][-1])/2
+        else:
+            raise InvalidModeError()
 
-        elif mode == "nopen":
+        order["amount"] = amount/rate if assetQuantity == self.primary else amount
+        order["rate"] = rate
 
-    def market_sell(self, amount, assetQuantity=None):
+        return {"orderUuid": "ord_"+self.id_gen.increment(), "order": order, "processed": True}
+
+    def market_sell(self, amount, assetQuantity=None, backtest_mode="close"):
         if assetQuantity is None:
             assetQuantity = self.primary
-        r = self.swyftx.market_sell(self.primary, self.secondary, amount,
-                                    assetQuantity).json()
+        if self.backtest:
+            r = self.backtest_sell(amount, assetQuantity, backtest_mode)
+        else:
+            r = self.swyftx.market_sell(self.primary, self.secondary, amount,
+                                        assetQuantity).json()
         if r["order"]["status"] == 4: # If market sell is successful.
-            self.balance = self.swyftx.fetch_balance()
-            # Figure out a way to find out how much was actually made during a sell transaction.
+            self.update_balance(r)
             # Apparently, we don't get charged any fees in the demo mode.
-            #self.balance[self.primary] += (r["userCountryValue"] - r["amount"]*r["rate"])
-            #self.balance[self.secondary] -= r["amount"]
-            self.swyftx.delete_order(self.stop_loss_id)
+            if self.stop_loss_id:
+                self.swyftx.delete_order(self.stop_loss_id)
             self.bought = False
             self.zoomed = False
-            self.history.append(self.order_to_list(r))
+            order = self.order_to_list(r)
+            print("Sell order:",order)
+            self.history.append(order)
 
             # Used for timer related stuff:
+            if self.running:
+                self.stop_clock()
+                self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
+                                                   resolution=rank_up(self.resolution))
+                self.run_clock(resolution=self.resolution)
 
-            self.stop_clock()
-            self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
-                                               resolution=rank_up(self.resolution))
-            self.run_clock(resolution=self.resolution)
+    def backtest_sell(self, amount, assetQuantity, mode="close"):
+        """
+        Sell function used in backtesting. It's the same as market_sell, except it doesn't actually make a real purchase.
+        :param mode: a string that determines the value at which to buy. There are currently n modes:
+            'open': buy price is always the open value.
+            'random': buy price is a random value between low and high.
+            'mid': buy price is between open and close
+        :param open: a float that represents the price at open.
+        :param close: a float that represents the price at close.
+        :param low: a float that represents the lowest price within a timeframe.
+        :param high: a float that represents the highest price within a timeframe.
+        :return: a dictionary that simulates the output of a market_buy
+        """
+        order = self.generate_dummy_order(amount, "SELL")
+        if mode == "close":
+            rate = self.data[check_rank(self.resolution)]["close"][-1]
+        elif mode == "open":
+            rate = self.data[check_rank(self.resolution)]["open"][-1]
+        elif mode == "random":
+            rate = uniform(self.data[check_rank(self.resolution)]["low"][-1], self.data[check_rank(self.resolution)]["high"][-1])
+        elif mode == "mid":
+            rate = (self.data[check_rank(self.resolution)]["open"][-1]+self.data[check_rank(self.resolution)]["close"][-1])/2
+        else:
+            raise InvalidModeError()
 
+        order["amount"] = amount/rate if assetQuantity == self.primary else amount
+        order["rate"] = rate
+
+        return {"orderUuid": "ord_"+self.id_gen.increment(), "order": order, "processed": True}
+
+    def set_stop_loss(self, amount, assetQuantity):
+        if self.backtest:
+            """
+            Doesn't belong here.
+            out = {"order_type":"SELL",
+                     "primary_asset": self.primary,
+                     "secondary_asset": self.secondary,
+                     "quantity_asset":self.primary,
+                     "quantity": amount,
+                     "trigger": None,
+                     "status": "Success",
+                     "created_time": self.data[check_rank(self.resolution)]["time"][-1],
+                     "updated_time": self.data[check_rank(self.resolution)]["time"][-1],
+                     "amount": None,
+                     "rate": None,
+                     "userCountryValue": amount,
+                     }
+            """
+            self.backtest_stop_loss_order = self.generate_dummy_order(amount, "STOP SELL")
+            out = "ord_"+self.id_gen.increment()
+
+        else:
+            out = self.swyftx.stop_loss(self.primary, self.secondary, amount,
+                                  self.swing_low, assetQuantity=assetQuantity).json()["orderUuid"]
+            self.stop_loss_id = out
+
+        return out
+
+    def update_balance(self, order=None):
+        if self.backtest:
+            if "SELL" in order["order"]["order_type"]:
+                multiplier = 1
+            elif "BUY" in order["order"]["order_type"]:
+                multiplier = -1
+            else:
+                raise InvalidTypeError
+            self.balance[self.primary] += order["order"]["total"]*multiplier
+            self.balance[self.secondary] += order["order"]["amount"]*multiplier*(-1)
+
+        else:
+            self.balance = self.swyftx.fetch_balance()
 
     def primary_balance(self):
         return float(self.balance[self.primary])
 
+    def generate_dummy_order(self, amount, order_type):
+        return  {"order_type": order_type,
+                 "primary_asset": self.primary,
+                 "secondary_asset": self.secondary,
+                 "quantity_asset":self.primary,
+                 "quantity": amount,
+                 "trigger": None,
+                 "status": 4,
+                 "created_time": self.data[check_rank(self.resolution)]["time"][-1],
+                 "updated_time": self.data[check_rank(self.resolution)]["time"][-1],
+                 "amount": None,
+                 "total": amount,
+                 "rate": None,
+                 "userCountryValue": amount,
+                 }
+
     def history_to_csv(self):
-        d = pd.DataFrame(self.history, columns=["orderUuid", "order_type", "primary_asset", "secondary_asset", "quantity_asset", "quantity", "trigger", "status", "created_time", "updated_time", "amount", "total", "rate", "aud_value", "swyftxValue", "userCountryValue", "processed"])
+        d = pd.DataFrame(self.history, columns=["orderUuid", "order_type", "primary_asset", "secondary_asset", "quantity_asset", "quantity", "trigger", "status", "created_time", "updated_time", "amount", "total", "rate","userCountryValue"])
         path = os.path.join("history", self.secondary)
-        d.to_csv(os.path.join(path, str(1+len(os.listdir(path)))))
+        d.to_csv(os.path.join(path, str(1+len(os.listdir(path)))+".csv"), index=False)
 
     def plot(self, resolution=None, last=None):
         """

@@ -392,15 +392,17 @@ class SwyftX:
 
     def delete_last_order(self, assetCode=""):
         """
+        ###################### Not Reliable #########################
         Cancels the latest order. If we want to delete the last order for a specific asset, change orderUuid, otherwise
         it'll just delete the last asset.
         :param assetCode: a string that denotes the order for a specific asset.
         :return:
         """
-        return self.delete_order(self.list_recent_order(assetCode)[-1]["orderUuid"])
+        return self.delete_order(self.recent_order(assetCode)[-1]["orderUuid"])
 
     def recent_order(self, assetCode, limit="", page=""):
         """
+        ###################### Not Reliable #########################
         Returns a list of dictionaries about recent orders.
         :param assetCode: a string that indicates the
         :param limit: a string that represents the number of entries (orders) we're interested in getting.
@@ -489,6 +491,30 @@ class SwyftX:
             "assetCode":secondary,
             "data":d
         }
+
+    def get_asset_timeslot(self, primary, secondary, side, resolution, t):
+        """
+        Gets a specific timeslot for a specific cryptocurrency.
+        :param primary:
+        :param secondary:
+        :param side:
+        :param resolution:
+        :param t: datetime object that indicates the timeslot we're interested.
+        :return: a dictionary in the form of:
+            {
+                "time",
+                "close",
+                "high",
+                "low",
+                "open",
+                "volume"
+            }
+        """
+        out= self.get_asset_data(primary, secondary, side, resolution, t, t, readable_time=False)["data"]#[-1]
+        #print("out =", out)
+        print(t)
+        return out[-1]
+
 
     def get_last_completed_data(self, primary, secondary, side, resolution):
         """
@@ -646,6 +672,8 @@ class SwyftX:
         Stops livestream.
         """
         self.threaded_timer.stop()
+
+
 
 if '__main__' == __name__:
     with open("key.txt", "r") as f:
