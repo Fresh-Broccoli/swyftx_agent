@@ -1,14 +1,12 @@
 import requests
 import json
 import os
-import numpy as np
 
 from collections import deque
 from datetime import datetime, timedelta
 from threaded_timer import NearestTimer
-from talib import MACD, EMA
 from time import time, sleep
-from nearest import erase_seconds, resolution_to_seconds, next_interval
+from nearest import erase_seconds, resolution_to_seconds, calculate_next_interval
 # API documentation: https://swyftx.docs.apiary.io/
 
 endpoints = {
@@ -480,10 +478,11 @@ class SwyftX:
             time_start = str(1000*int(time_start.timestamp()))
         if type(time_end) is datetime:
             time_end = str(1000*int(time_end.timestamp()))
-
+        #print(f"time_start: {time_start}\ntime_end: {time_end}")
         self.session.headers.update(self.default_header)
         d = json.loads(self.session.get(endpoints[
                                  "base"] + "charts/getBars/" + "/".join([primary,secondary,side,"&".join(["?resolution="+resolution, f"timeStart={int(time_start)}",f"timeEnd={int(time_end)}"])])).text)["candles"]
+
         if readable_time:
             for i in range(len(d)):
                 d[i]["time"] = datetime.fromtimestamp(int(d[i]["time"])/1000)
@@ -510,10 +509,11 @@ class SwyftX:
                 "volume"
             }
         """
-        out= self.get_asset_data(primary, secondary, side, resolution, t, t, readable_time=False)["data"]#[-1]
+        #print(t)
+        out= self.get_asset_data(primary, secondary, side, resolution, t, int(calculate_next_interval(t.timestamp(),resolution))*1000, readable_time=False)["data"][-1]
         #print("out =", out)
-        print(t)
-        return out[-1]
+
+        return out#[-1]
 
 
     def get_last_completed_data(self, primary, secondary, side, resolution):

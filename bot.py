@@ -27,7 +27,7 @@ app = dash.Dash(__name__)
 
 class Bot:
 
-    def __init__(self, key, mode="demo"):
+    def __init__(self, key, mode="demo", backtest=False):
         """
         Initialising Bot.
         :param key: a string that is the SwyftX API key. Instructions to creating your own is here:
@@ -35,6 +35,7 @@ class Bot:
         :param mode: a string that determines the mode in which this bot is running. There are two possibilities:
             'demo': if you want to use SwyftX' demo mode where you have $10k USD to trade.
             'base': if you want to trade for real.
+        :param backtest: a boolean that determines whether to initiate the bot in backtest mode.
         """
         self.key = key
         self.swyftx = SwyftX(key, mode)
@@ -42,12 +43,15 @@ class Bot:
             no_of_resolutions)], [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)], [
                                                                                                     None for _ in range(
                 no_of_resolutions)], [None for _ in range(no_of_resolutions)], [None for _ in range(no_of_resolutions)]
+        self.backtest = backtest
         self.primary, self.secondary, self.balance, self.resolution, self.swing_low, self.last_macd, self.last_signal, self.cross, self.macd_gradient, self.signal_gradient, self.buy_signal, self.bull, self.app, self.buy_rate, self.buy_price, self.stop_loss_id = None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         self.fast, self.slow, self.signal, self.long = None, None, None, None
-        self.start_time, self.backtest, self.id_gen, self.backtest_stop_loss_order, self.backtest_ctime = None, None, None, None, None
+        self.start_time, self.id_gen, self.backtest_stop_loss_order, self.backtest_ctime, self.periods = None, None, None, None, None
         self.history = []
         self.zoomed, self.bought, self.running = False, False, False
+        self.history_directory = None
         self.tolerance, self.temp_tolerance = 0, 0
+        self.balance = self.swyftx.fetch_balance()
         print("-" * 110)
         print("Bot created. Please call 'collect_and_process_live_data' to start trading a particular cryptocurrency.")
         print("-" * 110)
@@ -87,6 +91,7 @@ class Bot:
         self.fast, self.slow, self.signal, self.long = fast, slow, signal, long
         self.buy_rate = buy_rate
         self.backtest = backtest
+        self.periods = int((end_time - start_time).total_seconds()/resolution_to_seconds[self.resolution])
 
         if graph:
             # now = time()
@@ -124,12 +129,19 @@ class Bot:
             else:
                 # For backtesting,
                 self.id_gen = Id_Generator()
+                # Calculates the number of resolutions between start_time and end_time. This value will be
+                # used to set
+
+                # Set the targeted asset to 0
+                self.balance[self.secondary] = 0
+
                 i = 0
                 while self.data[check_rank(self.resolution)]["time"][-1] < backtest_end_time:
-                    #timeslot =
                     i += 1
                     print(i)
                     self.update_all(fast, slow, signal, long)
+                self.history_directory = None
+                print("Backtesting complete!")
 
     def collect_and_process_live_data(self, primary, secondary, resolution="1m", fast=12, slow=26, signal=9, long=100,
                                       swing_period=60, tolerance=2, whole_resolution=True, start_time=None, end_time=None,
@@ -181,11 +193,12 @@ class Bot:
         self.secondary = secondary
         self.resolution = resolution
         self.tolerance, self.temp_tolerance = tolerance, tolerance
-        self.balance = self.swyftx.fetch_balance()
+
         data = self.swyftx.extract_price_data(
             self.swyftx.get_asset_data(primary, secondary, "ask", resolution, start_time * 1000, now * 1000, True))
         # data_bid = self.extract_price_data(self.get_asset_data(primary, secondary, "bid", "1m", start_time, now, True))
         #print("data:",data)
+
         max_length = len(data["close"])
         ema_fast = EMA(np.array(data["close"]), fast)
         ema_slow = EMA(np.array(data["close"]), slow)
@@ -197,10 +210,10 @@ class Bot:
         self.ema_slow[check_rank(self.resolution)] = deque(ema_slow, max_length)
         self.macd[check_rank(self.resolution)] = deque(macd, max_length)
         self.ema_hundred[check_rank(self.resolution)] = deque(EMA(np.array(data["close"]), long), max_length)
-        t = data["time"][data["low"].index(min(list(data["low"])[swing_period * (-1):]))]
+        #t = data["time"][data["low"].index(min(list(data["low"])[swing_period * (-1):]))]
         #print("Swing Low time: ", t)
-        self.swing_low = self.swyftx.get_asset_timeslot(self.primary,self.secondary, "bid", self.resolution,t)["low"]
-
+        #self.swing_low = self.swyftx.get_asset_timeslot(self.primary,self.secondary, "bid", self.resolution,t)["low"]
+        self.swing_low = min(list(data["low"])[swing_period * (-1):])
             #min(
             #list(data["low"])[swing_period * (-1):])  # Could be subjected to change. Also considering 'close'.
         self.data[check_rank(self.resolution)] = data
@@ -215,7 +228,7 @@ class Bot:
         :param kwargs: parameter values for self.update_all()
         """
         if self.backtest:
-            pass
+            self.running = True
         else:
             print("Starting clock...")
             self.running = True
@@ -226,7 +239,7 @@ class Bot:
         Stops livestream.
         """
         if self.backtest:
-            pass
+            self.running = False
         else:
             self.swyftx.stop_stream()
             self.running = False
@@ -243,11 +256,10 @@ class Bot:
         :param signal: an integer that represents the number of periods considered when calculating the EMA for MACD.
         :param long: an integer that represents the number of periods considered when calculating the long EMA.
         """
+        #print("Balance: ", self.balance)
         print(f"Last close: {self.data[check_rank(self.resolution)]['close'][-1]}")
         print(f"Last time: {self.data[check_rank(self.resolution)]['time'][-1]}")
-        # self.update_data(self.swyftx.get_latest_asset_data(self.primary, self.secondary, "ask", self.resolution))
         new_data = self.swyftx.get_last_completed_data(self.primary, self.secondary, "ask", self.resolution) if not self.backtest else self.swyftx.get_asset_timeslot(self.primary, self.secondary, "ask", self.resolution, datetime.fromtimestamp(calculate_next_interval(self.data[check_rank(self.resolution)]["time"][-1].timestamp(), interval=self.resolution)))
-        #return new_data
         self.update_data(new_data)
         print(f"Updated close: {self.data[check_rank(self.resolution)]['close'][-1]}")
         print(f"Update time: {self.data[check_rank(self.resolution)]['time'][-1]}")
@@ -258,7 +270,7 @@ class Bot:
 
         # Strategy:
         self.macd_gradient_strategy()
-        print("History:",self.history)
+        #print("History:",self.history)
 
     def macd_gradient_strategy(self):
         if not self.bought:
@@ -269,70 +281,32 @@ class Bot:
                     r = self.market_buy(amount, stop_loss=True) # might need to use a while loop to ensure that a buy
                     # order is always successful.
 
-                    """
-                    r = self.swyftx.market_buy(self.primary, self.secondary, amount,
-                                               self.primary)
-                    if r.ok:  # Check to see if response is successful
-                        r = r.json()["order"]
-                        if r["status"] == 4:  # If purchase is successful, set self.bought to true, and create
-                            # stop loss
-                            self.bought = True
-                            self.buy_price = r["rate"]
-
-                            self.balance = self.swyftx.fetch_balance()
-                            #self.balance[self.primary] -= r["userCountryValue"]
-                            #self.balance[self.secondary] += r["amount"]
-                            self.stop_loss_id = self.swyftx.stop_loss(self.primary, self.secondary, amount, self.swing_low).json()["orderUuid"]
-                    """
-
                 else:
                     # otherwise, we zoom in.
                     self.stop_clock()
                     # self.resolution = rank_down(self.resolution)
                     self.zoomed = True
-                    self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
-                                                       resolution=rank_down(self.resolution))
+                    # if backtesting, it'll be the last time appended to self.data[rank]['time'], else it is
+                    # the current time.
+                    end = datetime.now() if not self.backtest else self.data[check_rank(self.resolution)]['time'][-1]
+                    rank = rank_down(self.resolution)
+                    #start = ... # end subtracted by the time self.periods * the numerical value of rank
+                    self.collect_and_process_live_data(primary=self.primary,
+                                                       secondary=self.secondary,
+                                                       resolution=rank,
+                                                       fast=self.fast,
+                                                       slow=self.slow,
+                                                       signal=self.signal,
+                                                       long=self.long,
+                                                       #start_time=start,
+                                                       end_time=end)
+
                     self.run_clock(resolution=self.resolution)
         else: # If bought, observe momentum
             if self.macd_gradient <= 0: # MACD is decreasing/stagnant
                 self.temp_tolerance -= 1
                 if self.temp_tolerance < 0:
                     r = self.market_sell(self.balance[self.secondary], self.secondary)
-                    """
-                    r = self.swyftx.market_sell(self.primary, self.secondary, self.balance[self.secondary], self.secondary)
-                    if r.ok: # If sell request is successful:
-                        r = r.json()["order"]
-                        if r["status"] == 4: # If market sell is successful.
-                            self.balance = self.swyftx.fetch_balance()
-                            # Figure out a way to find out how much was actually made during a sell transaction.
-                            # Apparently, we don't get charged any fees in the demo mode.
-                            #self.balance[self.primary] += (r["userCountryValue"] - r["amount"]*r["rate"])
-                            #self.balance[self.secondary] -= r["amount"]
-                            self.swyftx.delete_order(self.stop_loss_id)
-                            self.bought = False
-                            self.zoomed = False
-                            self.stop_clock()
-                            self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
-                                                               resolution=rank_up(self.resolution))
-                            self.run_clock(resolution=self.resolution)
-                    """
-
-
-        """
-        if self.check_macro_buy_signal(): # Buy condition/signal
-            # Stop clock
-            # Create
-            if self.zoomed:
-                # Buy
-
-            else:
-                self.stop_clock()
-                #self.resolution = rank_down(self.resolution)
-                self.zoomed = True
-                self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary, resolution=rank_down(self.resolution))
-                #self.quick_start(self.primary, self.secondary, resolution=rank_down(self.resolution), fast=self.fast, slow=self.slow, signal=self.signal, long=self.long)
-                self.run_clock(resolution=self.resolution)
-        """
 
     def safe_update_all(self, fast=12, slow=26, signal=9, long=100):
         """
@@ -449,20 +423,23 @@ class Bot:
             # to look at the overall trend once again.
             # Since the stop loss order has been filled, self.bought will become False because we're now looking for a
             # new opportunity to re-enter the market.
-            if self.stop_loss_id: # This check is necessary because it's possible that a swing-low was reached, but a
-                # stop sell was never placed.
-                r = self.swyftx.get_order(self.stop_loss_id)
-                if r.ok:
-                    if r.json()["status"] == 4: # This means that the order is filled.
-                        self.zoomed = False
-                        self.bought = False
-                        self.record_stop_loss()
-                        # Record stop loss transaction to history.
-                        self.stop_clock()
-                        self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
-                                                           resolution=rank_up(self.resolution))
-                        self.run_clock(resolution=self.resolution)
+            if not self.backtest: # Stop loss check is disabled during backtesting
+                if self.stop_loss_id: # This check is necessary because it's possible that a swing-low was reached, but a
+                    # stop sell was never placed.
+                    r = self.swyftx.get_order(self.stop_loss_id)
 
+                    if r.ok:
+                        if r.json()["status"] == 4: # This means that the order is filled.
+                            self.zoomed = False
+                            self.bought = False
+                            self.record_stop_loss()
+                            # Record stop loss transaction to history.
+                            self.stop_clock()
+
+                            self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
+                                                               resolution=rank_up(self.resolution))
+
+                            self.run_clock(resolution=self.resolution)
             self.swing_low = value
 
 
@@ -546,9 +523,13 @@ class Bot:
 
             if stop_loss:
                 self.set_stop_loss(amount, assetQuantity)
+
+            # Record and save
             order = self.order_to_list(r)
             print("Buy order:",order)
             self.history.append(order)
+
+
         return r
 
     def backtest_buy(self, amount, assetQuantity, mode="close"):
@@ -594,6 +575,7 @@ class Bot:
             # Apparently, we don't get charged any fees in the demo mode.
             if self.stop_loss_id:
                 self.swyftx.delete_order(self.stop_loss_id)
+                self.stop_loss_id = None
             self.bought = False
             self.zoomed = False
             order = self.order_to_list(r)
@@ -603,8 +585,12 @@ class Bot:
             # Used for timer related stuff:
             if self.running:
                 self.stop_clock()
-                self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
-                                                   resolution=rank_up(self.resolution))
+                if self.backtest:
+                    self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
+                                                       resolution=rank_up(self.resolution), end_time=self.data[check_rank(self.resolution)]["time"][-1])
+                else:
+                    self.collect_and_process_live_data(primary=self.primary, secondary=self.secondary,
+                                                       resolution=rank_up(self.resolution))
                 self.run_clock(resolution=self.resolution)
 
     def backtest_sell(self, amount, assetQuantity, mode="close"):
@@ -639,22 +625,6 @@ class Bot:
 
     def set_stop_loss(self, amount, assetQuantity):
         if self.backtest:
-            """
-            Doesn't belong here.
-            out = {"order_type":"SELL",
-                     "primary_asset": self.primary,
-                     "secondary_asset": self.secondary,
-                     "quantity_asset":self.primary,
-                     "quantity": amount,
-                     "trigger": None,
-                     "status": "Success",
-                     "created_time": self.data[check_rank(self.resolution)]["time"][-1],
-                     "updated_time": self.data[check_rank(self.resolution)]["time"][-1],
-                     "amount": None,
-                     "rate": None,
-                     "userCountryValue": amount,
-                     }
-            """
             self.backtest_stop_loss_order = self.generate_dummy_order(amount, "STOP SELL")
             out = "ord_"+self.id_gen.increment()
 
@@ -667,15 +637,16 @@ class Bot:
 
     def update_balance(self, order=None):
         if self.backtest:
+            print("Balance before: ", self.balance)
             if "SELL" in order["order"]["order_type"]:
-                multiplier = 1
+                self.balance[self.primary] += (order["order"]["amount"]*order["order"]["rate"])
+                self.balance[self.secondary] -= order["order"]["amount"]
             elif "BUY" in order["order"]["order_type"]:
-                multiplier = -1
+                self.balance[self.primary] -= order["order"]["total"]
+                self.balance[self.secondary] += order["order"]["amount"]
             else:
                 raise InvalidTypeError
-            self.balance[self.primary] += order["order"]["total"]*multiplier
-            self.balance[self.secondary] += order["order"]["amount"]*multiplier*(-1)
-
+            print("Balance after: ", self.balance)
         else:
             self.balance = self.swyftx.fetch_balance()
 
@@ -700,8 +671,13 @@ class Bot:
 
     def history_to_csv(self):
         d = pd.DataFrame(self.history, columns=["orderUuid", "order_type", "primary_asset", "secondary_asset", "quantity_asset", "quantity", "trigger", "status", "created_time", "updated_time", "amount", "total", "rate","userCountryValue"])
-        path = os.path.join("history", self.secondary)
-        d.to_csv(os.path.join(path, str(1+len(os.listdir(path)))+".csv"), index=False)
+        if self.history_directory:
+            pass
+        else:
+            path = os.path.join("history", self.secondary)
+            filename = str(1+len(os.listdir(path)))+".csv"
+            self.history_directory = os.path.join(path, filename)
+        d.to_csv(self.history_directory, index=False)
 
     def plot(self, resolution=None, last=None):
         """
@@ -806,16 +782,11 @@ def open_browser():
     webbrowser.open_new("http://localhost:{}".format(port))
 
 
-with open("key.txt", "r") as f:
-    key = f.readline()
-
-bot = Bot(key)
-
 if '__main__' == __name__:
-    pass
-    # swag = SwagX(key)
-    # d_buy = swag.get_asset_data("AUD", "BTC", "ask", "1m", datetime(2021,11,24), datetime.now())
-    # nd_buy = extract_price_data(d_buy)
-    # d_sell = swag.get_asset_data("AUD", "BTC", "bid", "1m", datetime(2021,11,24), datetime.now())
-    # nd_sell = extract_price_data(d_sell)
-    # watch("AUDIO")
+    with open("key.txt", "r") as f:
+        key = f.readline()
+
+    bot = Bot(key)
+
+    # Backtesting examples:
+    # bot.quick_start("USD", "ETH", "5m", start_time = datetime(2021, 4,24), end_time=datetime(2021,4,25),backtest=True, backtest_end_time=datetime(2021,4,26))
