@@ -11,7 +11,7 @@ from collections import deque
 from plotly.subplots import make_subplots
 from swyftx import SwyftX
 from tools import Id_Generator
-from datetime import datetime
+from datetime import datetime, timedelta
 from talib import EMA
 from time import time, sleep
 from random import uniform
@@ -85,6 +85,12 @@ class Bot:
 
         # Create directories for buying/selling history/log:
         os.makedirs(os.path.join("history", secondary), exist_ok=True)
+
+        if end_time is None:
+            end_time = datetime.now()
+
+        if start_time is None:
+            start_time = end_time - timedelta(seconds=resolution_to_seconds[resolution] * long)
 
         self.collect_and_process_live_data(primary, secondary, resolution, fast, slow, signal, long,
                                            start_time=start_time, end_time=end_time, whole_resolution=whole_resolution)
@@ -170,6 +176,7 @@ class Bot:
         now = end_time
         if end_time is None:
             now = time()
+
         elif type(end_time) is datetime:
             now = end_time.timestamp()
 
@@ -179,11 +186,10 @@ class Bot:
             # print("After: ", datetime.fromtimestamp(now))
 
         if start_time is None:
-            # Check if we're backtesting:
-            #if self.backtest:
-            #    raise NoStartTimeError()
-            # If there's no specified start time, it will be set 24 hours before the time this line is executed.
-            start_time = now - 24 * 60 * 60
+            # By default, if start_time is not specified, we will grab the minimal number of periods required to
+                # calculate MACD and EMA.
+            start_time = now - resolution_to_seconds[resolution] * long
+
         elif type(start_time) is datetime:
             start_time = start_time.timestamp()
 
